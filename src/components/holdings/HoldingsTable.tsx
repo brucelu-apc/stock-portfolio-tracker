@@ -22,17 +22,17 @@ import { AggregatedHolding, aggregateHoldings, calculateTPSL, Holding } from '..
 
 interface Props {
   holdings: Holding[]
+  marketData: { [key: string]: any }
 }
 
-const HoldingRow = ({ group }: { group: AggregatedHolding }) => {
+const HoldingRow = ({ group, marketData }: { group: AggregatedHolding, marketData: { [key: string]: any } }) => {
   const { isOpen, onToggle } = useDisclosure()
   const { tp, sl } = calculateTPSL(group)
   
-  // Mock current price for now (to be replaced by Supabase fetch)
-  const currentPrice = group.avgCost * 1.05 
+  const currentPrice = marketData[group.ticker]?.current_price || group.avgCost
   const marketValue = currentPrice * group.totalShares
   const pnl = marketValue - group.totalCost
-  const roi = (pnl / group.totalCost) * 100
+  const roi = group.totalCost > 0 ? (pnl / group.totalCost) * 100 : 0
 
   const isProfit = pnl >= 0
 
@@ -106,7 +106,7 @@ const HoldingRow = ({ group }: { group: AggregatedHolding }) => {
   )
 }
 
-export const HoldingsTable = ({ holdings }: Props) => {
+export const HoldingsTable = ({ holdings, marketData }: Props) => {
   const aggregatedData = aggregateHoldings(holdings)
 
   return (
@@ -118,7 +118,7 @@ export const HoldingsTable = ({ holdings }: Props) => {
             <Th>名稱</Th>
             <Th isNumeric>總股數</Th>
             <Th isNumeric>加權均價</Th>
-            <Th isNumeric>市值 (TWD)</Th>
+            <Th isNumeric>市值 (原生)</Th>
             <Th isNumeric>總損益</Th>
             <Th isNumeric>停利/損</Th>
             <Th>操作</Th>
@@ -133,7 +133,7 @@ export const HoldingsTable = ({ holdings }: Props) => {
             </Tr>
           ) : (
             aggregatedData.map((group) => (
-              <HoldingRow key={group.ticker} group={group} />
+              <HoldingRow key={group.ticker} group={group} marketData={marketData} />
             ))
           )}
         </Tbody>

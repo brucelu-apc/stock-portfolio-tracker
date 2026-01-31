@@ -28,20 +28,27 @@ function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
   const [holdings, setHoldings] = useState<any[]>([])
+  const [marketData, setMarketData] = useState<{ [key: string]: any }>({})
   const { isOpen, onOpen, onClose } = useDisclosure()
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session)
       setLoading(false)
-      if (session) fetchHoldings()
+      if (session) {
+        fetchHoldings()
+        fetchMarketData()
+      }
     })
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session)
-      if (session) fetchHoldings()
+      if (session) {
+        fetchHoldings()
+        fetchMarketData()
+      }
     })
 
     return () => subscription.unsubscribe()
@@ -60,15 +67,40 @@ function App() {
     }
   }
 
+  const fetchMarketData = async () => {
+    const { data, error } = await supabase
+      .from('market_data')
+      .select('*')
+
+    if (error) {
+      console.error('Error fetching market data:', error)
+    } else {
+      const mapping = (data || []).reduce((acc: any, curr: any) => {
+        acc[curr.ticker] = curr
+        return acc
+      }, {})
+      setMarketData(mapping)
+    }
+  }
+
   const summary = useMemo(() => {
     const aggregated = aggregateHoldings(holdings)
     let totalCost = 0
     let totalValue = 0
 
+    const fxRate = marketData['USDTWD']?.current_price || 32.5 // Fallback to 32.5
+
     aggregated.forEach(g => {
       totalCost += g.totalCost
-      // Mocking value for now
-      totalValue += (g.avgCost * 1.05) * g.totalShares
+      const currentPrice = marketData[g.ticker]?.current_price || g.avgCost
+      const value = currentPrice * g.totalShares
+      
+      // If US stock, convert to TWD
+      if (g.region === 'US') {
+        totalValue += value * fxRate
+      } else {
+        totalValue += value
+      }
     })
 
     const totalPnl = totalValue - totalCost
@@ -130,7 +162,7 @@ function App() {
           </Button>
         </Flex>
 
-        <HoldingsTable holdings={holdings} />
+        <HoldingsTable holdings={holdings} marketData={marketData} />
 
         <AddHoldingModal 
           isOpen={isOpen} 
