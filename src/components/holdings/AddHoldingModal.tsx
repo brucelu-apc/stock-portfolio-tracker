@@ -69,7 +69,9 @@ export const AddHoldingModal = ({ isOpen, onClose, onSuccess }: Props) => {
         cost_price: parseFloat(price),
         shares: parseFloat(shares),
         buy_date: date,
-        is_multiple: isMultiple
+        is_multiple: isMultiple,
+        strategy_mode: 'auto',
+        high_watermark_price: parseFloat(price)
       })
 
       if (error) throw error

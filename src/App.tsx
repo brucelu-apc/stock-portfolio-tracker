@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { 
   Box, 
   Spinner, 
@@ -7,7 +7,13 @@ import {
   Button, 
   Flex, 
   Heading, 
-  useDisclosure 
+  useDisclosure,
+  SimpleGrid,
+  Stat,
+  StatLabel,
+  StatNumber,
+  StatHelpText,
+  StatArrow,
 } from '@chakra-ui/react'
 import { AddIcon } from '@chakra-ui/icons'
 import { supabase } from './services/supabase'
@@ -16,6 +22,7 @@ import { Navbar } from './components/common/Navbar'
 import { AddHoldingModal } from './components/holdings/AddHoldingModal'
 import { HoldingsTable } from './components/holdings/HoldingsTable'
 import { Session } from '@supabase/supabase-js'
+import { aggregateHoldings } from './utils/calculations'
 
 function App() {
   const [session, setSession] = useState<Session | null>(null)
@@ -44,7 +51,7 @@ function App() {
     const { data, error } = await supabase
       .from('portfolio_holdings')
       .select('*')
-      .order('created_at', { ascending: false })
+      .order('buy_date', { ascending: false })
 
     if (error) {
       console.error('Error fetching holdings:', error)
@@ -52,6 +59,23 @@ function App() {
       setHoldings(data || [])
     }
   }
+
+  const summary = useMemo(() => {
+    const aggregated = aggregateHoldings(holdings)
+    let totalCost = 0
+    let totalValue = 0
+
+    aggregated.forEach(g => {
+      totalCost += g.totalCost
+      // Mocking value for now
+      totalValue += (g.avgCost * 1.05) * g.totalShares
+    })
+
+    const totalPnl = totalValue - totalCost
+    const totalRoi = totalCost > 0 ? (totalPnl / totalCost) * 100 : 0
+
+    return { totalCost, totalValue, totalPnl, totalRoi }
+  }, [holdings])
 
   if (loading) {
     return (
@@ -70,8 +94,33 @@ function App() {
       <Navbar userEmail={session.user.email} />
       
       <Container maxW="container.xl" py={8}>
+        <SimpleGrid columns={{ base: 1, md: 4 }} spacing={6} mb={8}>
+          <Stat bg="white" p={4} rounded="lg" shadow="sm">
+            <StatLabel color="gray.500">總投資成本</StatLabel>
+            <StatNumber>${summary.totalCost.toLocaleString(undefined, { maximumFractionDigits: 0 })}</StatNumber>
+          </Stat>
+          <Stat bg="white" p={4} rounded="lg" shadow="sm">
+            <StatLabel color="gray.500">目前總市值</StatLabel>
+            <StatNumber>${summary.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</StatNumber>
+          </Stat>
+          <Stat bg="white" p={4} rounded="lg" shadow="sm">
+            <StatLabel color="gray.500">預估總損益</StatLabel>
+            <StatNumber color={summary.totalPnl >= 0 ? "red.500" : "green.500"}>
+              {summary.totalPnl >= 0 ? '+' : ''}
+              {summary.totalPnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            </StatNumber>
+          </Stat>
+          <Stat bg="white" p={4} rounded="lg" shadow="sm">
+            <StatLabel color="gray.500">總投報率</StatLabel>
+            <StatNumber color={summary.totalRoi >= 0 ? "red.500" : "green.500"}>
+              <StatArrow type={summary.totalRoi >= 0 ? 'increase' : 'decrease'} />
+              {summary.totalRoi.toFixed(2)}%
+            </StatNumber>
+          </Stat>
+        </SimpleGrid>
+
         <Flex justify="space-between" align="center" mb={6}>
-          <Heading size="lg">投資組合</Heading>
+          <Heading size="lg">我的持股</Heading>
           <Button 
             leftIcon={<AddIcon />} 
             colorScheme="blue" 
