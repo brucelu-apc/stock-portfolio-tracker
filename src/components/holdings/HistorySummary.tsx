@@ -6,10 +6,6 @@ import {
   HStack,
   Heading,
   Divider,
-  Stat,
-  StatLabel,
-  StatNumber,
-  StatHelpText,
 } from '@chakra-ui/react'
 import { useMemo } from 'react'
 
@@ -49,39 +45,53 @@ export const HistorySummary = ({ history }: Props) => {
   }, [history])
 
   return (
-    <Box bg="white" p={6} rounded="lg" shadow="sm" mb={6} border="1px" borderColor="gray.100">
-      <Heading size="sm" mb={4} color="gray.600">已實現彙總</Heading>
-      <SimpleGrid columns={{ base: 1, md: 2 }} spacing={10}>
-        <VStack align="stretch" spacing={2}>
-          <HStack justify="space-between">
-            <Text color="gray.500">總損益 (TWD)</Text>
-            <Text fontWeight="bold" fontSize="xl" color={summary.totalPnl >= 0 ? 'red.500' : 'green.500'}>
-              {summary.totalPnl >= 0 ? '+' : ''}{summary.totalPnl.toLocaleString()} ({summary.pnlPercent.toFixed(2)}%)
+    <Box bg="white" p={8} rounded="3xl" shadow="xl" mb={10} border="1px" borderColor="gray.50">
+      <Heading size="md" mb={8} fontWeight="extrabold" color="ui.navy" letterSpacing="tight">
+        已實現損益彙總 (Realized P&L)
+      </Heading>
+      
+      <SimpleGrid columns={{ base: 1, md: 2 }} spacing={12}>
+        <VStack align="stretch" spacing={4}>
+          <Box>
+            <Text color="ui.slate" fontWeight="bold" fontSize="xs" textTransform="uppercase" letterSpacing="widest" mb={2}>
+              本年度淨損益
             </Text>
-          </HStack>
+            <Text fontWeight="900" fontSize="3xl" color={summary.totalPnl >= 0 ? 'profit' : 'loss'}>
+              {summary.totalPnl >= 0 ? '+' : ''}{summary.totalPnl.toLocaleString()} 
+              <Text as="span" fontSize="lg" ml={2}>({summary.pnlPercent.toFixed(2)}%)</Text>
+            </Text>
+          </Box>
           
-          <Divider />
+          <Divider borderColor="gray.100" />
           
-          <HStack justify="space-between">
-            <Text color="gray.500">總買進</Text>
-            <Text fontWeight="semibold">{summary.totalBuy.toLocaleString()}</Text>
-          </HStack>
-          <HStack justify="space-between">
-            <Text color="gray.500">總賣出</Text>
-            <Text fontWeight="semibold">{summary.totalSell.toLocaleString()}</Text>
-          </HStack>
+          <SimpleGrid columns={2} spacing={4}>
+            <Box>
+              <Text color="ui.slate" fontWeight="bold" fontSize="xs" mb={1}>累計買進</Text>
+              <Text fontWeight="extrabold" fontSize="md">${summary.totalBuy.toLocaleString()}</Text>
+            </Box>
+            <Box>
+              <Text color="ui.slate" fontWeight="bold" fontSize="xs" mb={1}>累計賣出</Text>
+              <Text fontWeight="extrabold" fontSize="md">${summary.totalSell.toLocaleString()}</Text>
+            </Box>
+          </SimpleGrid>
         </VStack>
 
-        <VStack align="stretch" spacing={2}>
-          <HStack justify="space-between">
-            <Text color="gray.500">總手續費</Text>
-            <Text fontWeight="semibold">{summary.totalFee.toLocaleString()}</Text>
-          </HStack>
-          <HStack justify="space-between">
-            <Text color="gray.500">總交易稅</Text>
-            <Text fontWeight="semibold">{summary.totalTax.toLocaleString()}</Text>
-          </HStack>
-        </VStack>
+        <Box bg="gray.50" p={6} rounded="2xl">
+          <VStack align="stretch" spacing={4}>
+            <HStack justify="space-between">
+              <Text color="ui.slate" fontWeight="bold" fontSize="sm">累計交易手續費</Text>
+              <Text fontWeight="extrabold" color="ui.navy">${summary.totalFee.toLocaleString()}</Text>
+            </HStack>
+            <HStack justify="space-between">
+              <Text color="ui.slate" fontWeight="bold" fontSize="sm">累計證券交易稅</Text>
+              <Text fontWeight="extrabold" color="ui.navy">${summary.totalTax.toLocaleString()}</Text>
+            </HStack>
+            <Divider borderColor="gray.200" />
+            <Text fontSize="xs" color="ui.slate" fontStyle="italic">
+              * 數據包含所有已結算之台股與美股交易紀錄。
+            </Text>
+          </VStack>
+        </Box>
       </SimpleGrid>
     </Box>
   )
