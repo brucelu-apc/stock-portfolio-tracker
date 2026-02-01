@@ -1,3 +1,4 @@
 yfinance
 supabase
+playwright
 python-dotenv

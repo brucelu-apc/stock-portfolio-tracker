@@ -33,3 +33,16 @@ jobs:
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
           NOTIFICATION_TARGET_ID: ${{ secrets.NOTIFICATION_TARGET_ID }}
         run: python scripts/update_market_data.py
+
+      - name: Generate Monthly Report Poster
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 6 1 * *'
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          OPENCLAW_GATEWAY_URL: ${{ secrets.OPENCLAW_GATEWAY_URL }}
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+          NOTIFICATION_TARGET_ID: ${{ secrets.NOTIFICATION_TARGET_ID }}
+        run: |
+          playwright install chromium
+          python scripts/generate_report_html.py > report.html
+          python scripts/render_poster.py
