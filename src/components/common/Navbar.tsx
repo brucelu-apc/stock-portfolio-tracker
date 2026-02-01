@@ -38,6 +38,7 @@ export const Navbar = ({ userEmail, role, onNavigate }: NavbarProps) => {
             </Text>
             <HStack spacing={4} display={{ base: 'none', md: 'flex' }}>
               <ChakraLink onClick={() => onNavigate('dashboard')}>儀表板</ChakraLink>
+              <ChakraLink onClick={() => onNavigate('profit')}>獲利總覽</ChakraLink>
               {role === 'admin' && (
                 <ChakraLink onClick={() => onNavigate('admin')}>管理後台</ChakraLink>
               )}

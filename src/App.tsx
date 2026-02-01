@@ -29,6 +29,7 @@ import { Navbar } from './components/common/Navbar'
 import { AddHoldingModal } from './components/holdings/AddHoldingModal'
 import { HoldingsTable } from './components/holdings/HoldingsTable'
 import { AllocationCharts } from './components/dashboard/AllocationCharts'
+import { ProfitOverview } from './components/dashboard/ProfitOverview'
 import { HistoryTable } from './components/holdings/HistoryTable'
 import { HistorySummary } from './components/holdings/HistorySummary'
 import { UserManagement } from './components/admin/UserManagement'
@@ -188,6 +189,8 @@ function App() {
         return <UserManagement />
       case 'settings':
         return <SettingsPage userEmail={session.user.email} status={profile?.status} onNavigate={(page) => setCurrentPage(page)} />
+      case 'profit':
+        return <ProfitOverview history={history} />
       default:
         return (
           <>

@@ -30,6 +30,7 @@ interface Props {
 
 export const SellHoldingModal = ({ isOpen, onClose, onSuccess, holding, currentPrice }: Props) => {
   const [sellPrice, setSellPrice] = useState('')
+  const [sellShares, setSellShares] = useState('') // Added sell shares
   const [sellFee, setSellFee] = useState('')
   const [tax, setTax] = useState('')
   const [loading, setLoading] = useState(false)
@@ -39,11 +40,12 @@ export const SellHoldingModal = ({ isOpen, onClose, onSuccess, holding, currentP
     if (holding) {
       const price = currentPrice || holding.cost_price
       setSellPrice(price.toString())
+      setSellShares(holding.shares.toString()) // Default to full sell
       
       // Auto estimate Fee & Tax for TPE
       if (holding.region === 'TPE') {
         const volume = price * holding.shares
-        const estimatedFee = Math.max(20, Math.floor(volume * 0.001425 * 0.6)) // 60% discount example
+        const estimatedFee = Math.max(20, Math.floor(volume * 0.001425 * 0.6))
         const estimatedTax = Math.floor(volume * 0.003)
         setSellFee(estimatedFee.toString())
         setTax(estimatedTax.toString())
@@ -57,19 +59,25 @@ export const SellHoldingModal = ({ isOpen, onClose, onSuccess, holding, currentP
   const handleSell = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!holding) return
+    const sharesToSell = parseFloat(sellShares)
+    if (sharesToSell <= 0 || sharesToSell > holding.shares) {
+      toast({ title: '數量錯誤', status: 'error' })
+      return
+    }
+
     setLoading(true)
 
     try {
-      const totalFee = (holding.buy_fee || 0) + (parseFloat(sellFee) || 0)
+      const totalFee = (holding.buy_fee * (sharesToSell / holding.shares)) + (parseFloat(sellFee) || 0)
       const totalTax = parseFloat(tax) || 0
 
-      // 1. Move to history
+      // 1. Move the sold portion to history
       const { error: archiveError } = await supabase
         .from('historical_holdings')
         .insert({
           user_id: holding.user_id,
           ticker: holding.ticker,
-          shares: holding.shares,
+          shares: sharesToSell,
           cost_price: holding.cost_price,
           sell_price: parseFloat(sellPrice),
           fee: totalFee,
@@ -79,13 +87,24 @@ export const SellHoldingModal = ({ isOpen, onClose, onSuccess, holding, currentP
 
       if (archiveError) throw archiveError
 
-      // 2. Delete from active holdings
-      const { error: deleteError } = await supabase
-        .from('portfolio_holdings')
-        .delete()
-        .eq('id', holding.id)
-
-      if (deleteError) throw deleteError
+      // 2. Update or Delete from portfolio_holdings
+      if (sharesToSell === holding.shares) {
+        const { error: deleteError } = await supabase
+          .from('portfolio_holdings')
+          .delete()
+          .eq('id', holding.id)
+        if (deleteError) throw deleteError
+      } else {
+        const { error: updateError } = await supabase
+          .from('portfolio_holdings')
+          .update({ 
+            shares: holding.shares - sharesToSell,
+            // Pro-rate the buy_fee for the remaining shares
+            buy_fee: holding.buy_fee * ((holding.shares - sharesToSell) / holding.shares)
+          })
+          .eq('id', holding.id)
+        if (updateError) throw updateError
+      }
 
       toast({ title: '已結算並歸檔', status: 'success' })
       onSuccess()
@@ -108,7 +127,7 @@ export const SellHoldingModal = ({ isOpen, onClose, onSuccess, holding, currentP
             <VStack spacing={4} align="stretch">
               <Box bg="blue.50" p={3} rounded="md">
                 <HStack justify="space-between">
-                  <Text size="sm">持有股數:</Text>
+                  <Text size="sm">目前持有股數:</Text>
                   <Text fontWeight="bold">{holding?.shares}</Text>
                 </HStack>
                 <HStack justify="space-between">
@@ -117,15 +136,26 @@ export const SellHoldingModal = ({ isOpen, onClose, onSuccess, holding, currentP
                 </HStack>
               </Box>
 
-              <FormControl isRequired>
-                <FormLabel>賣出價格</FormLabel>
-                <Input 
-                  type="number" 
-                  step="any"
-                  value={sellPrice}
-                  onChange={(e) => setSellPrice(e.target.value)}
-                />
-              </FormControl>
+              <HStack w="full">
+                <FormControl isRequired>
+                  <FormLabel>賣出數量</FormLabel>
+                  <Input 
+                    type="number" 
+                    step="any"
+                    value={sellShares}
+                    onChange={(e) => setSellShares(e.target.value)}
+                  />
+                </FormControl>
+                <FormControl isRequired>
+                  <FormLabel>賣出價格</FormLabel>
+                  <Input 
+                    type="number" 
+                    step="any"
+                    value={sellPrice}
+                    onChange={(e) => setSellPrice(e.target.value)}
+                  />
+                </FormControl>
+              </HStack>
 
               <HStack w="full">
                 <FormControl>
