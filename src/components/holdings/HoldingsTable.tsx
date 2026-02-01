@@ -16,7 +16,7 @@ import {
   VStack,
   useToast,
 } from '@chakra-ui/react'
-import { EditIcon, DeleteIcon, ChevronDownIcon, ChevronUpIcon } from '@chakra-ui/icons'
+import { EditIcon, DeleteIcon, ChevronDownIcon, ChevronUpIcon, TriangleUpIcon, TriangleDownIcon } from '@chakra-ui/icons'
 import { MouseEvent, useState } from 'react'
 import { AggregatedHolding, aggregateHoldings, calculateTPSL, Holding } from '../../utils/calculations'
 import { supabase } from '../../services/supabase'
@@ -24,22 +24,22 @@ import { EditHoldingModal } from './EditHoldingModal'
 
 interface Props {
   holdings: Holding[]
-  priceMap: { [ticker: string]: number }
+  marketData: { [ticker: string]: any }
   onDataChange?: () => void
 }
 
 interface HoldingRowProps {
   group: AggregatedHolding
-  priceMap: { [ticker: string]: number }
   onEdit: (holding: Holding) => void
   onDelete: (holding: Holding) => void
 }
 
-const HoldingRow = ({ group, priceMap, onEdit, onDelete }: HoldingRowProps) => {
+const HoldingRow = ({ group, onEdit, onDelete }: HoldingRowProps) => {
   const { isOpen, onToggle } = useDisclosure()
   const { tp, sl } = calculateTPSL(group)
 
   const isProfit = group.unrealizedPnl >= 0
+  const isUp = group.change >= 0
   const latestItem = group.items[0]
 
   return (
@@ -63,6 +63,19 @@ const HoldingRow = ({ group, priceMap, onEdit, onDelete }: HoldingRowProps) => {
         <Td>{group.name}</Td>
         <Td isNumeric>{group.totalShares.toLocaleString()}</Td>
         <Td isNumeric>{group.region === 'US' ? '$' : ''}{group.avgCost.toFixed(2)}</Td>
+        
+        {/* New Columns: Latest Price, Change, Change % */}
+        <Td isNumeric fontWeight="bold">
+          {group.region === 'US' ? '$' : ''}{group.currentPrice.toFixed(2)}
+        </Td>
+        <Td isNumeric>
+          <HStack justify="flex-end" spacing={1} color={isUp ? 'red.500' : 'green.500'}>
+            {isUp ? <TriangleUpIcon /> : <TriangleDownIcon />}
+            <Text fontWeight="bold">{Math.abs(group.change).toFixed(2)}</Text>
+            <Text fontSize="xs">({isUp ? '+' : '-'}{Math.abs(group.changePercent).toFixed(2)}%)</Text>
+          </HStack>
+        </Td>
+
         <Td isNumeric fontWeight="semibold">
           {group.marketValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
         </Td>
@@ -105,7 +118,7 @@ const HoldingRow = ({ group, priceMap, onEdit, onDelete }: HoldingRowProps) => {
 
       {group.isMultiple && (
         <Tr>
-          <Td colSpan={8} p={0} borderBottom={isOpen ? '1px solid' : 'none'} borderColor="gray.100">
+          <Td colSpan={10} p={0} borderBottom={isOpen ? '1px solid' : 'none'} borderColor="gray.100">
             <Collapse in={isOpen}>
               <Box p={4} bg="gray.50" fontSize="sm">
                 <Text fontWeight="bold" mb={2} color="gray.600">買入明細</Text>
@@ -129,8 +142,8 @@ const HoldingRow = ({ group, priceMap, onEdit, onDelete }: HoldingRowProps) => {
   )
 }
 
-export const HoldingsTable = ({ holdings, priceMap, onDataChange }: Props) => {
-  const aggregatedData = aggregateHoldings(holdings, priceMap)
+export const HoldingsTable = ({ holdings, marketData, onDataChange }: Props) => {
+  const aggregatedData = aggregateHoldings(holdings, marketData)
   const toast = useToast()
   const [selectedHolding, setSelectedHolding] = useState<Holding | null>(null)
   const { isOpen, onOpen, onClose } = useDisclosure()
@@ -141,11 +154,11 @@ export const HoldingsTable = ({ holdings, priceMap, onDataChange }: Props) => {
   }
 
   const handleDelete = async (holding: Holding) => {
-    const currentPrice = priceMap[holding.ticker] || holding.cost_price
+    const mData = marketData[holding.ticker] || {}
+    const currentPrice = mData.current_price || holding.cost_price
     if (!confirm(`確定要刪除 ${holding.ticker} (${holding.buy_date}) 這筆記錄並移至歷史紀錄嗎？\n結算價格將以目前市價 $${currentPrice} 計算。`)) return
 
     try {
-      // 1. Insert into historical_holdings
       const { error: archiveError } = await supabase
         .from('historical_holdings')
         .insert({
@@ -159,7 +172,6 @@ export const HoldingsTable = ({ holdings, priceMap, onDataChange }: Props) => {
 
       if (archiveError) throw archiveError
 
-      // 2. Delete from portfolio_holdings
       const { error: deleteError } = await supabase
         .from('portfolio_holdings')
         .delete()
@@ -184,7 +196,9 @@ export const HoldingsTable = ({ holdings, priceMap, onDataChange }: Props) => {
               <Th>名稱</Th>
               <Th isNumeric>總股數</Th>
               <Th isNumeric>加權均價</Th>
-              <Th isNumeric>市值 (原生)</Th>
+              <Th isNumeric>最新股價</Th>
+              <Th isNumeric>漲跌</Th>
+              <Th isNumeric>市值 (TWD)</Th>
               <Th isNumeric>總損益</Th>
               <Th isNumeric>停利/損</Th>
               <Th>操作</Th>
@@ -193,7 +207,7 @@ export const HoldingsTable = ({ holdings, priceMap, onDataChange }: Props) => {
           <Tbody>
             {aggregatedData.length === 0 ? (
               <Tr>
-                <Td colSpan={8} textAlign="center" py={10}>
+                <Td colSpan={10} textAlign="center" py={10}>
                   目前沒有持股，請點擊「新增持股」按鈕。
                 </Td>
               </Tr>
@@ -202,7 +216,6 @@ export const HoldingsTable = ({ holdings, priceMap, onDataChange }: Props) => {
                 <HoldingRow
                   key={group.ticker}
                   group={group}
-                  priceMap={priceMap}
                   onEdit={handleEdit}
                   onDelete={handleDelete}
                 />

@@ -20,8 +20,9 @@ import {
   TabPanels,
   Tab,
   TabPanel,
+  useToast,
 } from '@chakra-ui/react'
-import { AddIcon } from '@chakra-ui/icons'
+import { RepeatIcon, AddIcon } from '@chakra-ui/icons'
 import { supabase } from './services/supabase'
 import { AuthPage } from './components/auth/AuthPage'
 import { Navbar } from './components/common/Navbar'
@@ -39,9 +40,11 @@ function App() {
   const [profile, setProfile] = useState<any>(null)
   const [holdings, setHoldings] = useState<any[]>([])
   const [history, setHistory] = useState<any[]>([])
-  const [marketData, setMarketData] = useState<{ [ticker: string]: number }>({})
+  const [marketData, setMarketData] = useState<{ [ticker: string]: any }>({})
   const [currentPage, setCurrentPage] = useState('dashboard')
+  const [refreshing, setRefreshing] = useState(false)
   const { isOpen, onOpen, onClose } = useDisclosure()
+  const toast = useToast()
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -108,17 +111,31 @@ function App() {
   const fetchMarketData = async () => {
     const { data, error } = await supabase
       .from('market_data')
-      .select('ticker, current_price')
+      .select('*')
 
     if (error) {
       console.error('Error fetching market data:', error)
     } else {
-      const priceMap: { [ticker: string]: number } = {}
+      const priceMap: { [ticker: string]: any } = {}
       data?.forEach((item: any) => {
-        priceMap[item.ticker] = item.current_price
+        priceMap[item.ticker] = item
       })
       setMarketData(priceMap)
     }
+  }
+
+  const handleManualRefresh = async () => {
+    setRefreshing(true)
+    await fetchMarketData()
+    await fetchHoldings()
+    await fetchHistory()
+    setRefreshing(false)
+    toast({
+      title: '數據已更新',
+      description: '已從伺服器獲取最新市場資訊。',
+      status: 'success',
+      duration: 3000,
+    })
   }
 
   const summary = useMemo(() => {
@@ -205,7 +222,16 @@ function App() {
 
               <TabPanels>
                 <TabPanel p={0}>
-                  <Flex justify="flex-end" mb={4}>
+                  <Flex justify="flex-end" mb={4} gap={2}>
+                    <Button 
+                      leftIcon={<RepeatIcon />} 
+                      variant="outline" 
+                      size="sm"
+                      onClick={handleManualRefresh}
+                      isLoading={refreshing}
+                    >
+                      更新股價
+                    </Button>
                     <Button 
                       leftIcon={<AddIcon />} 
                       colorScheme="blue" 
@@ -217,7 +243,7 @@ function App() {
                   </Flex>
                   <HoldingsTable 
                     holdings={holdings} 
-                    priceMap={marketData} 
+                    marketData={marketData} 
                     onDataChange={() => { fetchHoldings(); fetchHistory(); }} 
                   />
                 </TabPanel>

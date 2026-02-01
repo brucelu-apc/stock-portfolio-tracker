@@ -1,5 +1,6 @@
 export interface Holding {
   id: string
+  user_id: string
   ticker: string
   name: string
   region: string
@@ -20,10 +21,13 @@ export interface AggregatedHolding {
   totalShares: number
   avgCost: number
   totalCost: number
-  currentPrice: number // Added real price
-  marketValue: number  // Added calculated value
-  unrealizedPnl: number // Added calculated PnL
-  roi: number          // Added calculated ROI
+  currentPrice: number
+  prevClose: number
+  change: number
+  changePercent: number
+  marketValue: number
+  unrealizedPnl: number
+  roi: number
   latestDate: string
   isMultiple: boolean
   strategyMode: 'auto' | 'manual'
@@ -33,28 +37,34 @@ export interface AggregatedHolding {
   items: Holding[]
 }
 
-export const aggregateHoldings = (holdings: Holding[], priceMap: { [ticker: string]: number }): AggregatedHolding[] => {
+export const aggregateHoldings = (holdings: Holding[], marketData: { [ticker: string]: any }): AggregatedHolding[] => {
   const groups: { [key: string]: Holding[] } = {}
-
+  
   holdings.forEach(h => {
     if (!groups[h.ticker]) groups[h.ticker] = []
     groups[h.ticker].push(h)
   })
 
   return Object.keys(groups).map(ticker => {
-    const items = groups[ticker].sort((a, b) =>
+    const items = groups[ticker].sort((a, b) => 
       new Date(b.buy_date).getTime() - new Date(a.buy_date).getTime()
     )
-
+    
     const latest = items[0]
     const totalShares = items.reduce((sum, item) => sum + item.shares, 0)
     const totalCost = items.reduce((sum, item) => sum + (item.shares * item.cost_price), 0)
     const avgCost = totalShares > 0 ? totalCost / totalShares : 0
 
-    // Get real price from map, fallback to avgCost if missing (0% PnL) to avoid NaN
-    const currentPrice = priceMap[ticker] || avgCost
-    const fxRate = latest.region === 'US' ? (priceMap['USDTWD'] || 32.5) : 1
+    // Get market data
+    const mData = marketData[ticker] || {}
+    const currentPrice = mData.current_price || avgCost
+    const prevClose = mData.prev_close || currentPrice
+    
+    const change = currentPrice - prevClose
+    const changePercent = prevClose !== 0 ? (change / prevClose) * 100 : 0
 
+    const fxRate = latest.region === 'US' ? (marketData['USDTWD']?.current_price || 32.5) : 1
+    
     // Values in TWD for summary consistency
     const totalCostTWD = totalCost * fxRate
     const marketValueTWD = (currentPrice * totalShares) * fxRate
@@ -67,10 +77,13 @@ export const aggregateHoldings = (holdings: Holding[], priceMap: { [ticker: stri
       region: latest.region,
       totalShares,
       avgCost,
-      totalCost: totalCostTWD, // Now in TWD
+      totalCost: totalCostTWD,
       currentPrice,
-      marketValue: marketValueTWD, // Now in TWD
-      unrealizedPnl: unrealizedPnlTWD, // Now in TWD
+      prevClose,
+      change,
+      changePercent,
+      marketValue: marketValueTWD,
+      unrealizedPnl: unrealizedPnlTWD,
       roi,
       latestDate: latest.buy_date,
       isMultiple: items.length > 1,
@@ -94,7 +107,7 @@ export const calculateTPSL = (holding: AggregatedHolding) => {
   // Auto Trailing logic: MAX(Cost * 1.1, HighWatermark * 0.9)
   const baseTP = holding.avgCost * 1.1
   const trailingTP = (holding.highWatermark || holding.avgCost) * 0.9
-
+  
   return {
     tp: Math.max(baseTP, trailingTP),
     sl: holding.avgCost // Breakeven
