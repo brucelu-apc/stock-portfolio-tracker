@@ -2,3 +2,4 @@ yfinance
 supabase
 playwright
 python-dotenv
+requests

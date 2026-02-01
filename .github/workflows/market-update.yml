@@ -44,5 +44,6 @@ jobs:
           NOTIFICATION_TARGET_ID: ${{ secrets.NOTIFICATION_TARGET_ID }}
         run: |
           playwright install chromium
+          playwright install-deps chromium
           python scripts/generate_report_html.py > report.html
           python scripts/render_poster.py
