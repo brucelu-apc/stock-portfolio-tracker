@@ -21,6 +21,7 @@ import { MouseEvent, useState } from 'react'
 import { AggregatedHolding, aggregateHoldings, calculateTPSL, Holding } from '../../utils/calculations'
 import { supabase } from '../../services/supabase'
 import { EditHoldingModal } from './EditHoldingModal'
+import { SellHoldingModal } from './SellHoldingModal'
 
 interface Props {
   holdings: Holding[]
@@ -147,43 +148,16 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange }: Props) => 
   const toast = useToast()
   const [selectedHolding, setSelectedHolding] = useState<Holding | null>(null)
   const { isOpen, onOpen, onClose } = useDisclosure()
+  const { isOpen: isSellOpen, onOpen: onSellOpen, onClose: onSellClose } = useDisclosure()
 
   const handleEdit = (holding: Holding) => {
     setSelectedHolding(holding)
     onOpen()
   }
 
-  const handleDelete = async (holding: Holding) => {
-    const mData = marketData[holding.ticker] || {}
-    const currentPrice = mData.current_price || holding.cost_price
-    if (!confirm(`確定要刪除 ${holding.ticker} (${holding.buy_date}) 這筆記錄並移至歷史紀錄嗎？\n結算價格將以目前市價 $${currentPrice} 計算。`)) return
-
-    try {
-      const { error: archiveError } = await supabase
-        .from('historical_holdings')
-        .insert({
-          user_id: holding.user_id,
-          ticker: holding.ticker,
-          shares: holding.shares,
-          cost_price: holding.cost_price,
-          sell_price: currentPrice,
-          archive_reason: 'sold'
-        })
-
-      if (archiveError) throw archiveError
-
-      const { error: deleteError } = await supabase
-        .from('portfolio_holdings')
-        .delete()
-        .eq('id', holding.id)
-
-      if (deleteError) throw deleteError
-
-      toast({ title: '已移至歷史紀錄', status: 'success' })
-      onDataChange?.()
-    } catch (error: any) {
-      toast({ title: '操作失敗', description: error.message, status: 'error' })
-    }
+  const handleDelete = (holding: Holding) => {
+    setSelectedHolding(holding)
+    onSellOpen()
   }
 
   return (
@@ -230,6 +204,14 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange }: Props) => 
         onClose={onClose} 
         holding={selectedHolding} 
         onSuccess={onDataChange || (() => {})} 
+      />
+
+      <SellHoldingModal
+        isOpen={isSellOpen}
+        onClose={onSellClose}
+        holding={selectedHolding}
+        currentPrice={selectedHolding ? (marketData[selectedHolding.ticker]?.current_price) : undefined}
+        onSuccess={onDataChange || (() => {})}
       />
     </>
   )

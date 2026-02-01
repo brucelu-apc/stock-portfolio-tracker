@@ -30,6 +30,7 @@ import { AddHoldingModal } from './components/holdings/AddHoldingModal'
 import { HoldingsTable } from './components/holdings/HoldingsTable'
 import { AllocationCharts } from './components/dashboard/AllocationCharts'
 import { HistoryTable } from './components/holdings/HistoryTable'
+import { HistorySummary } from './components/holdings/HistorySummary'
 import { UserManagement } from './components/admin/UserManagement'
 import { SettingsPage } from './components/settings/SettingsPage'
 import { Session } from '@supabase/supabase-js'
@@ -253,6 +254,7 @@ function App() {
                 </TabPanel>
                 
                 <TabPanel p={0}>
+                  <HistorySummary history={history} />
                   <HistoryTable history={history} />
                 </TabPanel>
               </TabPanels>

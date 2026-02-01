@@ -6,6 +6,7 @@ export interface Holding {
   region: string
   shares: number
   cost_price: number
+  buy_fee: number // Added buy fee
   is_multiple: boolean
   buy_date: string
   strategy_mode: 'auto' | 'manual'

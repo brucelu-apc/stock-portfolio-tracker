@@ -30,6 +30,7 @@ export const AddHoldingModal = ({ isOpen, onClose, onSuccess }: Props) => {
   const [name, setName] = useState('')
   const [price, setPrice] = useState('')
   const [shares, setShares] = useState('')
+  const [buyFee, setBuyFee] = useState('')
   const [date, setDate] = useState(new Date().toISOString().split('T')[0])
   const [loading, setLoading] = useState(false)
   const toast = useToast()
@@ -68,6 +69,7 @@ export const AddHoldingModal = ({ isOpen, onClose, onSuccess }: Props) => {
         name: name || tickerClean,
         cost_price: parseFloat(price),
         shares: parseFloat(shares),
+        buy_fee: parseFloat(buyFee) || 0,
         buy_date: date,
         is_multiple: isMultiple,
         strategy_mode: 'auto',
@@ -152,6 +154,16 @@ export const AddHoldingModal = ({ isOpen, onClose, onSuccess }: Props) => {
                     step="any"
                     value={shares}
                     onChange={(e) => setShares(e.target.value)}
+                  />
+                </FormControl>
+                <FormControl>
+                  <FormLabel>手續費</FormLabel>
+                  <Input 
+                    type="number" 
+                    step="any"
+                    value={buyFee}
+                    onChange={(e) => setBuyFee(e.target.value)}
+                    placeholder="0"
                   />
                 </FormControl>
               </HStack>

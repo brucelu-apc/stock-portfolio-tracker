@@ -66,6 +66,7 @@ CREATE TABLE public.portfolio_holdings (
     name TEXT,
     shares NUMERIC NOT NULL,
     cost_price NUMERIC NOT NULL,
+    buy_fee NUMERIC DEFAULT 0, -- Added buy fee
     buy_date DATE NOT NULL,
     is_multiple BOOLEAN DEFAULT FALSE,
     strategy_mode TEXT DEFAULT 'auto' CHECK (strategy_mode IN ('manual', 'auto')),
@@ -90,6 +91,8 @@ CREATE TABLE public.historical_holdings (
     shares NUMERIC,
     cost_price NUMERIC,
     sell_price NUMERIC,
+    fee NUMERIC DEFAULT 0, -- Total fee (buy + sell)
+    tax NUMERIC DEFAULT 0, -- Transaction tax
     archived_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     archive_reason TEXT -- 'sold', 'adjusted'
 );
