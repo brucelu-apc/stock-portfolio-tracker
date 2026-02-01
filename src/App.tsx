@@ -15,6 +15,11 @@ import {
   StatArrow,
   Alert,
   AlertIcon,
+  Tabs,
+  TabList,
+  TabPanels,
+  Tab,
+  TabPanel,
 } from '@chakra-ui/react'
 import { AddIcon } from '@chakra-ui/icons'
 import { supabase } from './services/supabase'
@@ -22,6 +27,7 @@ import { AuthPage } from './components/auth/AuthPage'
 import { Navbar } from './components/common/Navbar'
 import { AddHoldingModal } from './components/holdings/AddHoldingModal'
 import { HoldingsTable } from './components/holdings/HoldingsTable'
+import { HistoryTable } from './components/holdings/HistoryTable'
 import { UserManagement } from './components/admin/UserManagement'
 import { SettingsPage } from './components/settings/SettingsPage'
 import { Session } from '@supabase/supabase-js'
@@ -32,6 +38,7 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [profile, setProfile] = useState<any>(null)
   const [holdings, setHoldings] = useState<any[]>([])
+  const [history, setHistory] = useState<any[]>([])
   const [marketData, setMarketData] = useState<{ [ticker: string]: number }>({})
   const [currentPage, setCurrentPage] = useState('dashboard')
   const { isOpen, onOpen, onClose } = useDisclosure()
@@ -42,6 +49,7 @@ function App() {
       if (session) {
         fetchProfile(session.user.id)
         fetchHoldings()
+        fetchHistory()
         fetchMarketData()
       }
       setLoading(false)
@@ -54,6 +62,7 @@ function App() {
       if (session) {
         fetchProfile(session.user.id)
         fetchHoldings()
+        fetchHistory()
         fetchMarketData()
       }
     })
@@ -80,6 +89,19 @@ function App() {
       console.error('Error fetching holdings:', error)
     } else {
       setHoldings(data || [])
+    }
+  }
+
+  const fetchHistory = async () => {
+    const { data, error } = await supabase
+      .from('historical_holdings')
+      .select('*')
+      .order('archived_at', { ascending: false })
+
+    if (error) {
+      console.error('Error fetching history:', error)
+    } else {
+      setHistory(data || [])
     }
   }
 
@@ -175,18 +197,36 @@ function App() {
               </Stat>
             </SimpleGrid>
 
-            <Flex justify="space-between" align="center" mb={6}>
-              <Heading size="lg">我的持股</Heading>
-              <Button
-                leftIcon={<AddIcon />}
-                colorScheme="blue"
-                onClick={onOpen}
-              >
-                新增持股
-              </Button>
-            </Flex>
+            <Tabs variant="enclosed" colorScheme="blue">
+              <TabList mb={4}>
+                <Tab fontWeight="bold">我的持股</Tab>
+                <Tab fontWeight="bold">歷史成交</Tab>
+              </TabList>
 
-            <HoldingsTable holdings={holdings} priceMap={marketData} onDataChange={fetchHoldings} />
+              <TabPanels>
+                <TabPanel p={0}>
+                  <Flex justify="flex-end" mb={4}>
+                    <Button 
+                      leftIcon={<AddIcon />} 
+                      colorScheme="blue" 
+                      size="sm"
+                      onClick={onOpen}
+                    >
+                      新增持股
+                    </Button>
+                  </Flex>
+                  <HoldingsTable 
+                    holdings={holdings} 
+                    priceMap={marketData} 
+                    onDataChange={() => { fetchHoldings(); fetchHistory(); }} 
+                  />
+                </TabPanel>
+                
+                <TabPanel p={0}>
+                  <HistoryTable history={history} />
+                </TabPanel>
+              </TabPanels>
+            </Tabs>
 
             <AddHoldingModal
               isOpen={isOpen}
@@ -203,9 +243,9 @@ function App() {
 
   return (
     <Box minH="100vh" bg="gray.50">
-      <Navbar
-        userEmail={session.user.email}
-        role={profile?.role}
+      <Navbar 
+        userEmail={session.user.email} 
+        role={profile?.role} 
         onNavigate={(page) => setCurrentPage(page)}
       />
       <Container maxW="container.xl" py={8}>

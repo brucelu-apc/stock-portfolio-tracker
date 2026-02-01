@@ -17,9 +17,10 @@ import {
   useToast,
 } from '@chakra-ui/react'
 import { EditIcon, DeleteIcon, ChevronDownIcon, ChevronUpIcon } from '@chakra-ui/icons'
-import { MouseEvent } from 'react'
+import { MouseEvent, useState } from 'react'
 import { AggregatedHolding, aggregateHoldings, calculateTPSL, Holding } from '../../utils/calculations'
 import { supabase } from '../../services/supabase'
+import { EditHoldingModal } from './EditHoldingModal'
 
 interface Props {
   holdings: Holding[]
@@ -29,11 +30,12 @@ interface Props {
 
 interface HoldingRowProps {
   group: AggregatedHolding
+  priceMap: { [ticker: string]: number }
   onEdit: (holding: Holding) => void
-  onDelete: (id: string) => void
+  onDelete: (holding: Holding) => void
 }
 
-const HoldingRow = ({ group, onEdit, onDelete }: HoldingRowProps) => {
+const HoldingRow = ({ group, priceMap, onEdit, onDelete }: HoldingRowProps) => {
   const { isOpen, onToggle } = useDisclosure()
   const { tp, sl } = calculateTPSL(group)
 
@@ -95,7 +97,7 @@ const HoldingRow = ({ group, onEdit, onDelete }: HoldingRowProps) => {
               size="sm"
               variant="ghost"
               colorScheme="red"
-              onClick={() => onDelete(latestItem.id)}
+              onClick={() => onDelete(latestItem)}
             />
           </HStack>
         </Td>
@@ -128,7 +130,7 @@ const HoldingRow = ({ group, onEdit, onDelete }: HoldingRowProps) => {
                             size="xs"
                             variant="ghost"
                             colorScheme="red"
-                            onClick={() => onDelete(item.id)}
+                            onClick={() => onDelete(item)}
                           />
                         </HStack>
                       </HStack>
@@ -147,66 +149,92 @@ const HoldingRow = ({ group, onEdit, onDelete }: HoldingRowProps) => {
 export const HoldingsTable = ({ holdings, priceMap, onDataChange }: Props) => {
   const aggregatedData = aggregateHoldings(holdings, priceMap)
   const toast = useToast()
+  const [selectedHolding, setSelectedHolding] = useState<Holding | null>(null)
+  const { isOpen, onOpen, onClose } = useDisclosure()
 
   const handleEdit = (holding: Holding) => {
-    // TODO: Open edit modal with holding data
-    toast({
-      title: '編輯功能開發中',
-      description: `編輯 ${holding.ticker} (${holding.buy_date})`,
-      status: 'info'
-    })
+    setSelectedHolding(holding)
+    onOpen()
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('確定要刪除這筆持股記錄嗎？')) return
+  const handleDelete = async (holding: Holding) => {
+    const currentPrice = priceMap[holding.ticker] || holding.cost_price
+    if (!confirm(`確定要刪除 ${holding.ticker} (${holding.buy_date}) 這筆記錄並移至歷史紀錄嗎？\n結算價格將以目前市價 $${currentPrice} 計算。`)) return
 
-    const { error } = await supabase
-      .from('portfolio_holdings')
-      .delete()
-      .eq('id', id)
+    try {
+      // 1. Insert into historical_holdings
+      const { error: archiveError } = await supabase
+        .from('historical_holdings')
+        .insert({
+          user_id: holding.user_id,
+          ticker: holding.ticker,
+          shares: holding.shares,
+          cost_price: holding.cost_price,
+          sell_price: currentPrice,
+          archive_reason: 'sold'
+        })
 
-    if (error) {
-      toast({ title: '刪除失敗', description: error.message, status: 'error' })
-    } else {
-      toast({ title: '刪除成功', status: 'success' })
+      if (archiveError) throw archiveError
+
+      // 2. Delete from portfolio_holdings
+      const { error: deleteError } = await supabase
+        .from('portfolio_holdings')
+        .delete()
+        .eq('id', holding.id)
+
+      if (deleteError) throw deleteError
+
+      toast({ title: '已移至歷史紀錄', status: 'success' })
       onDataChange?.()
+    } catch (error: any) {
+      toast({ title: '操作失敗', description: error.message, status: 'error' })
     }
   }
 
   return (
-    <TableContainer bg="white" rounded="lg" shadow="sm" border="1px" borderColor="gray.100">
-      <Table variant="simple">
-        <Thead bg="gray.50">
-          <Tr>
-            <Th>代碼/地區</Th>
-            <Th>名稱</Th>
-            <Th isNumeric>總股數</Th>
-            <Th isNumeric>加權均價</Th>
-            <Th isNumeric>市值 (TWD)</Th>
-            <Th isNumeric>總損益</Th>
-            <Th isNumeric>停利/損</Th>
-            <Th>操作</Th>
-          </Tr>
-        </Thead>
-        <Tbody>
-          {aggregatedData.length === 0 ? (
+    <>
+      <TableContainer bg="white" rounded="lg" shadow="sm" border="1px" borderColor="gray.100">
+        <Table variant="simple">
+          <Thead bg="gray.50">
             <Tr>
-              <Td colSpan={8} textAlign="center" py={10}>
-                目前沒有持股，請點擊「新增持股」按鈕。
-              </Td>
+              <Th>代碼/地區</Th>
+              <Th>名稱</Th>
+              <Th isNumeric>總股數</Th>
+              <Th isNumeric>加權均價</Th>
+              <Th isNumeric>市值 (原生)</Th>
+              <Th isNumeric>總損益</Th>
+              <Th isNumeric>停利/損</Th>
+              <Th>操作</Th>
             </Tr>
-          ) : (
-            aggregatedData.map((group) => (
-              <HoldingRow
-                key={group.ticker}
-                group={group}
-                onEdit={handleEdit}
-                onDelete={handleDelete}
-              />
-            ))
-          )}
-        </Tbody>
-      </Table>
-    </TableContainer>
+          </Thead>
+          <Tbody>
+            {aggregatedData.length === 0 ? (
+              <Tr>
+                <Td colSpan={8} textAlign="center" py={10}>
+                  目前沒有持股，請點擊「新增持股」按鈕。
+                </Td>
+              </Tr>
+            ) : (
+              aggregatedData.map((group) => (
+                <HoldingRow
+                  key={group.ticker}
+                  group={group}
+                  priceMap={priceMap}
+                  onEdit={handleEdit}
+                  onDelete={handleDelete}
+                />
+              ))
+            )}
+          </Tbody>
+        </Table>
+      </TableContainer>
+
+      <EditHoldingModal 
+        isOpen={isOpen} 
+        onClose={onClose} 
+        holding={selectedHolding} 
+        onSuccess={onDataChange || (() => {})} 
+      />
+    </>
   )
 }
