@@ -1,9 +1,7 @@
 import {
   Box,
   SimpleGrid,
-  Text,
   Heading,
-  VStack,
 } from '@chakra-ui/react'
 import {
   PieChart,
@@ -52,8 +50,8 @@ export const AllocationCharts = ({ data }: Props) => {
       {/* Region Chart */}
       <Box bg="white" p={6} rounded="lg" shadow="sm">
         <Heading size="sm" mb={4} color="gray.600">市場比例 (地區)</Heading>
-        <Box h="300px">
-          <ResponsiveContainer width="100%" height="100%">
+        <Box h="300px" w="full">
+          <ResponsiveContainer width="100%" height="100%" minHeight={0}>
             <PieChart>
               <Pie
                 data={regionData}
@@ -76,8 +74,8 @@ export const AllocationCharts = ({ data }: Props) => {
       {/* Symbol Chart */}
       <Box bg="white" p={6} rounded="lg" shadow="sm">
         <Heading size="sm" mb={4} color="gray.600">持倉占比 (股票)</Heading>
-        <Box h="300px">
-          <ResponsiveContainer width="100%" height="100%">
+        <Box h="300px" w="full">
+          <ResponsiveContainer width="100%" height="100%" minHeight={0}>
             <PieChart>
               <Pie
                 data={symbolData}

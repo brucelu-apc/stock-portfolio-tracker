@@ -15,6 +15,7 @@ import {
   useToast,
   Text,
   Divider,
+  Box,
 } from '@chakra-ui/react'
 import { useState, useEffect } from 'react'
 import { supabase } from '../../services/supabase'
