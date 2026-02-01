@@ -20,6 +20,10 @@ export interface AggregatedHolding {
   totalShares: number
   avgCost: number
   totalCost: number
+  currentPrice: number // Added real price
+  marketValue: number  // Added calculated value
+  unrealizedPnl: number // Added calculated PnL
+  roi: number          // Added calculated ROI
   latestDate: string
   isMultiple: boolean
   strategyMode: 'auto' | 'manual'
@@ -29,7 +33,7 @@ export interface AggregatedHolding {
   items: Holding[]
 }
 
-export const aggregateHoldings = (holdings: Holding[]): AggregatedHolding[] => {
+export const aggregateHoldings = (holdings: Holding[], priceMap: { [ticker: string]: number }): AggregatedHolding[] => {
   const groups: { [key: string]: Holding[] } = {}
   
   holdings.forEach(h => {
@@ -47,6 +51,12 @@ export const aggregateHoldings = (holdings: Holding[]): AggregatedHolding[] => {
     const totalCost = items.reduce((sum, item) => sum + (item.shares * item.cost_price), 0)
     const avgCost = totalShares > 0 ? totalCost / totalShares : 0
 
+    // Get real price from map, fallback to avgCost if missing (0% PnL) to avoid NaN
+    const currentPrice = priceMap[ticker] || avgCost 
+    const marketValue = currentPrice * totalShares
+    const unrealizedPnl = marketValue - totalCost
+    const roi = totalCost > 0 ? (unrealizedPnl / totalCost) * 100 : 0
+
     return {
       ticker,
       name: latest.name,
@@ -54,6 +64,10 @@ export const aggregateHoldings = (holdings: Holding[]): AggregatedHolding[] => {
       totalShares,
       avgCost,
       totalCost,
+      currentPrice,
+      marketValue,
+      unrealizedPnl,
+      roi,
       latestDate: latest.buy_date,
       isMultiple: items.length > 1,
       strategyMode: latest.strategy_mode,

@@ -14,27 +14,22 @@ import {
   Box,
   useDisclosure,
   VStack,
-  Divider,
 } from '@chakra-ui/react'
 import { EditIcon, DeleteIcon, ChevronDownIcon, ChevronUpIcon } from '@chakra-ui/icons'
-import { useState } from 'react'
+import { MouseEvent } from 'react'
 import { AggregatedHolding, aggregateHoldings, calculateTPSL, Holding } from '../../utils/calculations'
 
 interface Props {
   holdings: Holding[]
-  marketData: { [key: string]: any }
+  priceMap: { [ticker: string]: number }
 }
 
-const HoldingRow = ({ group, marketData }: { group: AggregatedHolding, marketData: { [key: string]: any } }) => {
+const HoldingRow = ({ group, key: _key }: { group: AggregatedHolding; key?: string }) => {
   const { isOpen, onToggle } = useDisclosure()
   const { tp, sl } = calculateTPSL(group)
-  
-  const currentPrice = marketData[group.ticker]?.current_price || group.avgCost
-  const marketValue = currentPrice * group.totalShares
-  const pnl = marketValue - group.totalCost
-  const roi = group.totalCost > 0 ? (pnl / group.totalCost) * 100 : 0
 
-  const isProfit = pnl >= 0
+  // Logic moved to aggregateHoldings, now just display parameters
+  const isProfit = group.unrealizedPnl >= 0
 
   return (
     <>
@@ -54,15 +49,15 @@ const HoldingRow = ({ group, marketData }: { group: AggregatedHolding, marketDat
         <Td isNumeric>{group.totalShares.toLocaleString()}</Td>
         <Td isNumeric>${group.avgCost.toFixed(2)}</Td>
         <Td isNumeric fontWeight="semibold">
-          ${marketValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          ${group.marketValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
         </Td>
         <Td isNumeric>
           <VStack align="end" spacing={0}>
             <Text color={isProfit ? 'red.500' : 'green.500'} fontWeight="bold">
-              {isProfit ? '+' : ''}{pnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              {isProfit ? '+' : ''}{group.unrealizedPnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}
             </Text>
             <Text fontSize="xs" color={isProfit ? 'red.500' : 'green.500'}>
-              {isProfit ? '+' : ''}{roi.toFixed(2)}%
+              {isProfit ? '+' : ''}{group.roi.toFixed(2)}%
             </Text>
           </VStack>
         </Td>
@@ -72,14 +67,14 @@ const HoldingRow = ({ group, marketData }: { group: AggregatedHolding, marketDat
             <Text color="blue.600">損: {sl.toFixed(1)}</Text>
           </VStack>
         </Td>
-        <Td onClick={(e) => e.stopPropagation()}>
+        <Td onClick={(e: MouseEvent) => e.stopPropagation()}>
           <HStack spacing={2}>
             <IconButton aria-label="Edit" icon={<EditIcon />} size="sm" variant="ghost" />
             <IconButton aria-label="Delete" icon={<DeleteIcon />} size="sm" variant="ghost" colorScheme="red" />
           </HStack>
         </Td>
       </Tr>
-      
+
       {group.isMultiple && (
         <Tr>
           <Td colSpan={8} p={0} borderBottom={isOpen ? '1px solid' : 'none'} borderColor="gray.100">
@@ -106,8 +101,8 @@ const HoldingRow = ({ group, marketData }: { group: AggregatedHolding, marketDat
   )
 }
 
-export const HoldingsTable = ({ holdings, marketData }: Props) => {
-  const aggregatedData = aggregateHoldings(holdings)
+export const HoldingsTable = ({ holdings, priceMap }: Props) => {
+  const aggregatedData = aggregateHoldings(holdings, priceMap)
 
   return (
     <TableContainer bg="white" rounded="lg" shadow="sm" border="1px" borderColor="gray.100">
@@ -118,7 +113,7 @@ export const HoldingsTable = ({ holdings, marketData }: Props) => {
             <Th>名稱</Th>
             <Th isNumeric>總股數</Th>
             <Th isNumeric>加權均價</Th>
-            <Th isNumeric>市值 (原生)</Th>
+            <Th isNumeric>市值 (TWD)</Th>
             <Th isNumeric>總損益</Th>
             <Th isNumeric>停利/損</Th>
             <Th>操作</Th>
@@ -133,7 +128,7 @@ export const HoldingsTable = ({ holdings, marketData }: Props) => {
             </Tr>
           ) : (
             aggregatedData.map((group) => (
-              <HoldingRow key={group.ticker} group={group} marketData={marketData} />
+              <HoldingRow key={group.ticker} group={group} />
             ))
           )}
         </Tbody>

@@ -1,18 +1,17 @@
 import { useState, useEffect, useMemo } from 'react'
-import { 
-  Box, 
-  Spinner, 
-  Center, 
-  Container, 
-  Button, 
-  Flex, 
-  Heading, 
+import {
+  Box,
+  Spinner,
+  Center,
+  Container,
+  Button,
+  Flex,
+  Heading,
   useDisclosure,
   SimpleGrid,
   Stat,
   StatLabel,
   StatNumber,
-  StatHelpText,
   StatArrow,
 } from '@chakra-ui/react'
 import { AddIcon } from '@chakra-ui/icons'
@@ -28,7 +27,7 @@ function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
   const [holdings, setHoldings] = useState<any[]>([])
-  const [marketData, setMarketData] = useState<{ [key: string]: any }>({})
+  const [marketData, setMarketData] = useState<{ [ticker: string]: number }>({})
   const { isOpen, onOpen, onClose } = useDisclosure()
 
   useEffect(() => {
@@ -70,44 +69,34 @@ function App() {
   const fetchMarketData = async () => {
     const { data, error } = await supabase
       .from('market_data')
-      .select('*')
+      .select('ticker, current_price')
 
     if (error) {
       console.error('Error fetching market data:', error)
     } else {
-      const mapping = (data || []).reduce((acc: any, curr: any) => {
-        acc[curr.ticker] = curr
-        return acc
-      }, {})
-      setMarketData(mapping)
+      const priceMap: { [ticker: string]: number } = {}
+      data?.forEach((item: any) => {
+        priceMap[item.ticker] = item.current_price
+      })
+      setMarketData(priceMap)
     }
   }
 
   const summary = useMemo(() => {
-    const aggregated = aggregateHoldings(holdings)
+    const aggregated = aggregateHoldings(holdings, marketData)
     let totalCost = 0
     let totalValue = 0
 
-    const fxRate = marketData['USDTWD']?.current_price || 32.5 // Fallback to 32.5
-
     aggregated.forEach(g => {
       totalCost += g.totalCost
-      const currentPrice = marketData[g.ticker]?.current_price || g.avgCost
-      const value = currentPrice * g.totalShares
-      
-      // If US stock, convert to TWD
-      if (g.region === 'US') {
-        totalValue += value * fxRate
-      } else {
-        totalValue += value
-      }
+      totalValue += g.marketValue
     })
 
     const totalPnl = totalValue - totalCost
     const totalRoi = totalCost > 0 ? (totalPnl / totalCost) * 100 : 0
 
-    return { totalCost, totalValue, totalPnl, totalRoi }
-  }, [holdings])
+    return { totalCost, totalValue, totalPnl, totalRoi, aggregated }
+  }, [holdings, marketData])
 
   if (loading) {
     return (
@@ -124,7 +113,7 @@ function App() {
   return (
     <Box minH="100vh" bg="gray.50">
       <Navbar userEmail={session.user.email} />
-      
+
       <Container maxW="container.xl" py={8}>
         <SimpleGrid columns={{ base: 1, md: 4 }} spacing={6} mb={8}>
           <Stat bg="white" p={4} rounded="lg" shadow="sm">
@@ -153,21 +142,24 @@ function App() {
 
         <Flex justify="space-between" align="center" mb={6}>
           <Heading size="lg">我的持股</Heading>
-          <Button 
-            leftIcon={<AddIcon />} 
-            colorScheme="blue" 
+          <Button
+            leftIcon={<AddIcon />}
+            colorScheme="blue"
             onClick={onOpen}
           >
             新增持股
           </Button>
         </Flex>
 
-        <HoldingsTable holdings={holdings} marketData={marketData} />
+        <HoldingsTable holdings={holdings} priceMap={marketData} />
 
-        <AddHoldingModal 
-          isOpen={isOpen} 
-          onClose={onClose} 
-          onSuccess={fetchHoldings} 
+        <AddHoldingModal
+          isOpen={isOpen}
+          onClose={onClose}
+          onSuccess={() => {
+            fetchHoldings()
+            fetchMarketData()
+          }}
         />
       </Container>
     </Box>
