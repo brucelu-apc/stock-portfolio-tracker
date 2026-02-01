@@ -42,7 +42,7 @@ export const SellHoldingModal = ({ isOpen, onClose, onSuccess, holding, currentP
       const price = currentPrice || holding.cost_price
       setSellPrice(price.toString())
       setSellShares(holding.shares.toString()) // Default to full sell
-      
+
       // Auto estimate Fee & Tax for TPE
       if (holding.region === 'TPE') {
         const volume = price * holding.shares
@@ -98,7 +98,7 @@ export const SellHoldingModal = ({ isOpen, onClose, onSuccess, holding, currentP
       } else {
         const { error: updateError } = await supabase
           .from('portfolio_holdings')
-          .update({ 
+          .update({
             shares: holding.shares - sharesToSell,
             // Pro-rate the buy_fee for the remaining shares
             buy_fee: holding.buy_fee * ((holding.shares - sharesToSell) / holding.shares)
@@ -140,8 +140,8 @@ export const SellHoldingModal = ({ isOpen, onClose, onSuccess, holding, currentP
               <HStack w="full">
                 <FormControl isRequired>
                   <FormLabel>賣出數量</FormLabel>
-                  <Input 
-                    type="number" 
+                  <Input
+                    type="number"
                     step="any"
                     value={sellShares}
                     onChange={(e) => setSellShares(e.target.value)}
@@ -149,8 +149,8 @@ export const SellHoldingModal = ({ isOpen, onClose, onSuccess, holding, currentP
                 </FormControl>
                 <FormControl isRequired>
                   <FormLabel>賣出價格</FormLabel>
-                  <Input 
-                    type="number" 
+                  <Input
+                    type="number"
                     step="any"
                     value={sellPrice}
                     onChange={(e) => setSellPrice(e.target.value)}
@@ -161,24 +161,24 @@ export const SellHoldingModal = ({ isOpen, onClose, onSuccess, holding, currentP
               <HStack w="full">
                 <FormControl>
                   <FormLabel>賣出手續費</FormLabel>
-                  <Input 
-                    type="number" 
+                  <Input
+                    type="number"
                     value={sellFee}
                     onChange={(e) => setSellFee(e.target.value)}
                   />
                 </FormControl>
                 <FormControl>
                   <FormLabel>交易稅</FormLabel>
-                  <Input 
-                    type="number" 
+                  <Input
+                    type="number"
                     value={tax}
                     onChange={(e) => setTax(e.target.value)}
                   />
                 </FormControl>
               </HStack>
-              
+
               <Divider />
-              
+
               <Box>
                 <Text fontSize="xs" color="gray.500">
                   * 手續費包含買入時的 ${holding?.buy_fee || 0} 與本次賣出費用。

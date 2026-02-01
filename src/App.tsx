@@ -6,7 +6,6 @@ import {
   Container,
   Button,
   Flex,
-  Heading,
   useDisclosure,
   SimpleGrid,
   Stat,
@@ -21,6 +20,7 @@ import {
   Tab,
   TabPanel,
   useToast,
+  Skeleton,
 } from '@chakra-ui/react'
 import { RepeatIcon, AddIcon } from '@chakra-ui/icons'
 import { supabase } from './services/supabase'
@@ -59,7 +59,10 @@ function App() {
           fetchHoldings(),
           fetchHistory(),
           fetchMarketData()
-        ]).then(() => setIsDataLoading(false))
+        ]).then(() => {
+          setIsDataLoading(false)
+          setLoading(false)
+        })
       } else {
         setLoading(false)
       }
@@ -245,32 +248,32 @@ function App() {
               <TabPanels>
                 <TabPanel p={0}>
                   <Flex justify="flex-end" mb={4} gap={2}>
-                    <Button 
-                      leftIcon={<RepeatIcon />} 
-                      variant="outline" 
+                    <Button
+                      leftIcon={<RepeatIcon />}
+                      variant="outline"
                       size="sm"
                       onClick={handleManualRefresh}
                       isLoading={refreshing}
                     >
                       更新股價
                     </Button>
-                    <Button 
-                      leftIcon={<AddIcon />} 
-                      colorScheme="blue" 
+                    <Button
+                      leftIcon={<AddIcon />}
+                      colorScheme="blue"
                       size="sm"
                       onClick={onOpen}
                     >
                       新增持股
                     </Button>
                   </Flex>
-                  <HoldingsTable 
-                    holdings={holdings} 
-                    marketData={marketData} 
+                  <HoldingsTable
+                    holdings={holdings}
+                    marketData={marketData}
                     isLoading={isDataLoading}
-                    onDataChange={() => { fetchHoldings(); fetchHistory(); }} 
+                    onDataChange={() => { fetchHoldings(); fetchHistory(); }}
                   />
                 </TabPanel>
-                
+
                 <TabPanel p={0}>
                   <HistorySummary history={history} />
                   <HistoryTable history={history} />
@@ -293,9 +296,9 @@ function App() {
 
   return (
     <Box minH="100vh" bg="gray.50">
-      <Navbar 
-        userEmail={session.user.email} 
-        role={profile?.role} 
+      <Navbar
+        userEmail={session.user.email}
+        role={profile?.role}
         onNavigate={(page) => setCurrentPage(page)}
       />
       <Container maxW="container.xl" py={8}>
