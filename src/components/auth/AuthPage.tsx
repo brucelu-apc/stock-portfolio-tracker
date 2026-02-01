@@ -13,8 +13,12 @@ import {
   Card,
   CardBody,
   Divider,
+  Container,
 } from '@chakra-ui/react'
 import { supabase } from '../../services/supabase'
+import { motion } from 'framer-motion'
+
+const MotionBox = motion(Box)
 
 export const AuthPage = () => {
   const [email, setEmail] = useState('')
@@ -72,66 +76,108 @@ export const AuthPage = () => {
   }
 
   return (
-    <Box minH="100vh" display="flex" alignItems="center" justifyContent="center" bg="gray.50">
-      <Card w="full" maxW="md" shadow="lg">
-        <CardBody>
-          <VStack spacing={6}>
-            <Heading size="lg">{isSignUp ? '建立帳號' : '登入系統'}</Heading>
-            
-            <Button 
-              leftIcon={<Box as="span">G</Box>} 
-              w="full" 
-              variant="outline" 
-              onClick={handleGoogleLogin}
-            >
-              使用 Google 帳號繼續
-            </Button>
+    <Box 
+      minH="100vh" 
+      display="flex" 
+      alignItems="center" 
+      justifyContent="center" 
+      bg="ui.bg"
+      bgGradient="radial(circle at 20% 20%, brand.50, transparent), radial(circle at 80% 80%, brand.100, transparent)"
+    >
+      <Container maxW="md">
+        <MotionBox
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.4 }}
+        >
+          <VStack spacing={8}>
+            <VStack spacing={2} textAlign="center">
+              <Heading size="2xl" fontWeight="900" letterSpacing="tighter" color="ui.navy">
+                STOCK <Text as="span" color="brand.500">DANGO</Text>
+              </Heading>
+              <Text color="ui.slate" fontWeight="medium">專屬您的智能投資助手</Text>
+            </VStack>
 
-            <Box w="full" display="flex" alignItems="center">
-              <Divider />
-              <Text px={2} color="gray.400" fontSize="xs">或</Text>
-              <Divider />
-            </Box>
+            <Card w="full" shadow="2xl" p={4} rounded="3xl">
+              <CardBody>
+                <VStack spacing={6}>
+                  <Heading size="md" color="ui.navy">{isSignUp ? '建立您的帳號' : '歡迎回來'}</Heading>
+                  
+                  <Button 
+                    leftIcon={<Box as="span" fontSize="lg">G</Box>} 
+                    w="full" 
+                    variant="outline" 
+                    h="12"
+                    rounded="xl"
+                    onClick={handleGoogleLogin}
+                    _hover={{ bg: 'gray.50' }}
+                  >
+                    使用 Google 帳號繼續
+                  </Button>
 
-            <form style={{ width: '100%' }} onSubmit={handleAuth}>
-              <VStack spacing={4}>
-                <FormControl isRequired>
-                  <FormLabel>電子郵件</FormLabel>
-                  <Input 
-                    type="email" 
-                    value={email} 
-                    onChange={(e) => setEmail(e.target.value)} 
-                    placeholder="your@email.com"
-                  />
-                </FormControl>
-                <FormControl isRequired>
-                  <FormLabel>密碼</FormLabel>
-                  <Input 
-                    type="password" 
-                    value={password} 
-                    onChange={(e) => setPassword(e.target.value)} 
-                    placeholder="********"
-                  />
-                </FormControl>
-                <Button 
-                  type="submit" 
-                  colorScheme="blue" 
-                  w="full" 
-                  isLoading={loading}
-                >
-                  {isSignUp ? '註冊' : '登入'}
-                </Button>
-              </VStack>
-            </form>
-            <Text>
-              {isSignUp ? '已有帳號？' : '還沒有帳號？'}{' '}
-              <Link color="blue.500" onClick={() => setIsSignUp(!isSignUp)}>
-                {isSignUp ? '立即登入' : '立即註冊'}
-              </Link>
-            </Text>
+                  <Box w="full" display="flex" alignItems="center">
+                    <Divider />
+                    <Text px={4} color="gray.300" fontSize="xs" fontWeight="bold">OR</Text>
+                    <Divider />
+                  </Box>
+
+                  <form style={{ width: '100%' }} onSubmit={handleAuth}>
+                    <VStack spacing={4}>
+                      <FormControl isRequired>
+                        <FormLabel fontSize="sm" fontWeight="bold" color="ui.slate">電子郵件</FormLabel>
+                        <Input 
+                          h="12"
+                          rounded="xl"
+                          bg="gray.50"
+                          border="none"
+                          _focus={{ bg: 'white', boxShadow: '0 0 0 2px #0ea5e9' }}
+                          type="email" 
+                          value={email} 
+                          onChange={(e) => setEmail(e.target.value)} 
+                          placeholder="your@email.com"
+                        />
+                      </FormControl>
+                      <FormControl isRequired>
+                        <FormLabel fontSize="sm" fontWeight="bold" color="ui.slate">密碼</FormLabel>
+                        <Input 
+                          h="12"
+                          rounded="xl"
+                          bg="gray.50"
+                          border="none"
+                          _focus={{ bg: 'white', boxShadow: '0 0 0 2px #0ea5e9' }}
+                          type="password" 
+                          value={password} 
+                          onChange={(e) => setPassword(e.target.value)} 
+                          placeholder="********"
+                        />
+                      </FormControl>
+                      <Button 
+                        type="submit" 
+                        colorScheme="blue" 
+                        w="full" 
+                        h="12"
+                        rounded="xl"
+                        isLoading={loading}
+                        bgGradient="linear(to-r, brand.500, brand.600)"
+                        _hover={{ bgGradient: "linear(to-r, brand.600, brand.900)" }}
+                        shadow="lg"
+                      >
+                        {isSignUp ? '註冊' : '登入'}
+                      </Button>
+                    </VStack>
+                  </form>
+                  <Text fontSize="sm" color="ui.slate">
+                    {isSignUp ? '已經有帳號了？' : '還沒有帳號嗎？'}{' '}
+                    <Link color="brand.500" fontWeight="bold" onClick={() => setIsSignUp(!isSignUp)}>
+                      {isSignUp ? '立即登入' : '免費註冊'}
+                    </Link>
+                  </Text>
+                </VStack>
+              </CardBody>
+            </Card>
           </VStack>
-        </CardBody>
-      </Card>
+        </MotionBox>
+      </Container>
     </Box>
   )
 }

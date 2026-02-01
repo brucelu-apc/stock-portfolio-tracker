@@ -5,9 +5,13 @@ import {
   Button,
   Stack,
   HStack,
-  useColorModeValue,
   Container,
-  Link as ChakraLink,
+  Avatar,
+  Menu,
+  MenuButton,
+  MenuList,
+  MenuItem,
+  MenuDivider,
 } from '@chakra-ui/react'
 import { supabase } from '../../services/supabase'
 
@@ -24,40 +28,92 @@ export const Navbar = ({ userEmail, role, onNavigate }: NavbarProps) => {
 
   return (
     <Box
-      bg={useColorModeValue('white', 'gray.800')}
+      bg="rgba(255, 255, 255, 0.8)"
+      backdropFilter="blur(10px)"
       px={4}
-      borderBottom={1}
-      borderStyle={'solid'}
-      borderColor={useColorModeValue('gray.200', 'gray.900')}
+      position="sticky"
+      top={0}
+      zIndex="sticky"
+      borderBottom="1px solid"
+      borderColor="gray.100"
     >
       <Container maxW="container.xl">
-        <Flex h={16} alignItems={'center'} justifyContent={'space-between'}>
-          <HStack spacing={8}>
-            <Text fontWeight="bold" fontSize="xl" color="blue.500" cursor="pointer" onClick={() => onNavigate('dashboard')}>
-              StockTracker
+        <Flex h={20} alignItems={'center'} justifyContent={'space-between'}>
+          <HStack spacing={10}>
+            <Text 
+              fontWeight="900" 
+              fontSize="2xl" 
+              bgGradient="linear(to-r, brand.500, brand.900)" 
+              bgClip="text"
+              cursor="pointer" 
+              onClick={() => onNavigate('dashboard')}
+              letterSpacing="tighter"
+            >
+              STOCK DANGO
             </Text>
-            <HStack spacing={4} display={{ base: 'none', md: 'flex' }}>
-              <ChakraLink onClick={() => onNavigate('dashboard')}>儀表板</ChakraLink>
-              <ChakraLink onClick={() => onNavigate('profit')}>獲利總覽</ChakraLink>
+            <HStack spacing={6} display={{ base: 'none', md: 'flex' }}>
+              <Text 
+                fontWeight="bold" 
+                fontSize="sm" 
+                color="ui.navy" 
+                cursor="pointer" 
+                _hover={{ color: 'brand.500' }}
+                onClick={() => onNavigate('dashboard')}
+              >
+                資產儀表板
+              </Text>
+              <Text 
+                fontWeight="bold" 
+                fontSize="sm" 
+                color="ui.navy" 
+                cursor="pointer" 
+                _hover={{ color: 'brand.500' }}
+                onClick={() => onNavigate('profit')}
+              >
+                獲利總覽
+              </Text>
               {role === 'admin' && (
-                <ChakraLink onClick={() => onNavigate('admin')}>管理後台</ChakraLink>
+                <Text 
+                  fontWeight="bold" 
+                  fontSize="sm" 
+                  color="purple.600" 
+                  cursor="pointer" 
+                  _hover={{ color: 'purple.400' }}
+                  onClick={() => onNavigate('admin')}
+                >
+                  管理後台
+                </Text>
               )}
             </HStack>
           </HStack>
 
           <Flex alignItems={'center'}>
-            <Stack direction={'row'} spacing={4} alignItems="center">
-              <Box textAlign="right">
-                <Text fontSize="xs" color="gray.500">登入帳號</Text>
-                <Text fontSize="sm" fontWeight="medium">{userEmail}</Text>
-              </Box>
-              <Button size="sm" variant="outline" onClick={() => onNavigate('settings')}>
-                帳號設定
-              </Button>
-              <Button size="sm" colorScheme="red" variant="ghost" onClick={handleSignOut}>
-                登出
-              </Button>
-            </Stack>
+            <Menu>
+              <MenuButton
+                as={Button}
+                rounded={'full'}
+                variant={'link'}
+                cursor={'pointer'}
+                minW={0}>
+                <HStack spacing={3}>
+                  <Box textAlign="right" display={{ base: 'none', md: 'block' }}>
+                    <Text fontSize="xs" fontWeight="bold" color="ui.slate" textTransform="uppercase">Personal Account</Text>
+                    <Text fontSize="sm" fontWeight="extrabold" color="ui.navy">{userEmail?.split('@')[0]}</Text>
+                  </Box>
+                  <Avatar
+                    size={'sm'}
+                    src={''}
+                    bg="brand.500"
+                  />
+                </HStack>
+              </MenuButton>
+              <MenuList rounded="2xl" shadow="2xl" border="none" p={2}>
+                <MenuItem rounded="xl" fontWeight="bold" onClick={() => onNavigate('settings')}>帳號設定</MenuItem>
+                <MenuItem rounded="xl" fontWeight="bold">隱私權原則</MenuItem>
+                <MenuDivider />
+                <MenuItem rounded="xl" fontWeight="bold" color="red.500" onClick={handleSignOut}>登出系統</MenuItem>
+              </MenuList>
+            </Menu>
           </Flex>
         </Flex>
       </Container>
