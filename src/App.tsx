@@ -21,6 +21,7 @@ import {
   TabPanel,
   useToast,
   Skeleton,
+  Text,
 } from '@chakra-ui/react'
 import { RepeatIcon, AddIcon } from '@chakra-ui/icons'
 import { supabase } from './services/supabase'
@@ -36,6 +37,9 @@ import { UserManagement } from './components/admin/UserManagement'
 import { SettingsPage } from './components/settings/SettingsPage'
 import { Session } from '@supabase/supabase-js'
 import { aggregateHoldings } from './utils/calculations'
+import { motion, AnimatePresence } from 'framer-motion'
+
+const MotionGrid = motion(SimpleGrid)
 
 function App() {
   const [session, setSession] = useState<Session | null>(null)
@@ -46,7 +50,7 @@ function App() {
   const [marketData, setMarketData] = useState<{ [ticker: string]: any }>({})
   const [currentPage, setCurrentPage] = useState('dashboard')
   const [refreshing, setRefreshing] = useState(false)
-  const [isDataLoading, setIsDataLoading] = useState(true) // Added data loading state
+  const [isDataLoading, setIsDataLoading] = useState(true)
   const { isOpen, onOpen, onClose } = useDisclosure()
   const toast = useToast()
 
@@ -166,8 +170,8 @@ function App() {
 
   if (loading) {
     return (
-      <Center h="100vh">
-        <Spinner size="xl" color="blue.500" />
+      <Center h="100vh" bg="ui.bg">
+        <Spinner size="xl" color="brand.500" thickness="4px" />
       </Center>
     )
   }
@@ -180,7 +184,7 @@ function App() {
     if (profile?.status !== 'enabled' && profile?.role !== 'admin') {
       return (
         <Center mt={10}>
-          <Alert status="warning" variant="subtle" flexDir="column" alignItems="center" justifyContent="center" textAlign="center" height="200px" rounded="lg" maxW="md">
+          <Alert status="warning" variant="subtle" flexDir="column" alignItems="center" justifyContent="center" textAlign="center" height="200px" rounded="2xl" maxW="md" shadow="xl">
             <AlertIcon boxSize="40px" mr={0} />
             <Box mt={4} fontWeight="bold">
               您的帳號狀態為：{profile?.status?.toUpperCase() || 'PENDING'}
@@ -191,9 +195,9 @@ function App() {
       )
     }
 
-    const totalValueColor = summary.totalValue > summary.totalCost ? "red.500" : summary.totalValue < summary.totalCost ? "green.500" : "black";
-    const totalPnlColor = summary.totalPnl > 0 ? "red.500" : summary.totalPnl < 0 ? "green.500" : "black";
-    const totalRoiColor = summary.totalRoi > 0 ? "red.500" : summary.totalRoi < 0 ? "green.500" : "black";
+    const totalValueColor = summary.totalValue > summary.totalCost ? "profit" : summary.totalValue < summary.totalCost ? "loss" : "ui.navy";
+    const totalPnlColor = summary.totalPnl > 0 ? "profit" : summary.totalPnl < 0 ? "loss" : "ui.navy";
+    const totalRoiColor = summary.totalRoi > 0 ? "profit" : summary.totalRoi < 0 ? "loss" : "ui.navy";
 
     switch (currentPage) {
       case 'admin':
@@ -204,92 +208,87 @@ function App() {
         return <ProfitOverview history={history} />
       default:
         return (
-          <>
-            <SimpleGrid columns={{ base: 1, md: 4 }} spacing={6} mb={8}>
-              <Stat bg="white" p={4} rounded="lg" shadow="sm">
-                <StatLabel color="gray.500">總投資成本</StatLabel>
-                <Skeleton isLoaded={!isDataLoading}>
-                  <StatNumber>${summary.totalCost.toLocaleString(undefined, { maximumFractionDigits: 0 })}</StatNumber>
-                </Skeleton>
-              </Stat>
-              <Stat bg="white" p={4} rounded="lg" shadow="sm">
-                <StatLabel color="gray.500">目前總市值</StatLabel>
-                <Skeleton isLoaded={!isDataLoading}>
-                  <StatNumber color={totalValueColor}>${summary.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</StatNumber>
-                </Skeleton>
-              </Stat>
-              <Stat bg="white" p={4} rounded="lg" shadow="sm">
-                <StatLabel color="gray.500">預估總損益</StatLabel>
-                <Skeleton isLoaded={!isDataLoading}>
-                  <StatNumber color={totalPnlColor}>
-                    {summary.totalPnl >= 0 ? '+' : ''}
-                    {summary.totalPnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  </StatNumber>
-                </Skeleton>
-              </Stat>
-              <Stat bg="white" p={4} rounded="lg" shadow="sm">
-                <StatLabel color="gray.500">總投報率</StatLabel>
-                <Skeleton isLoaded={!isDataLoading}>
-                  <StatNumber color={totalRoiColor} display="flex" alignItems="center">
-                    {summary.totalRoi > 0 ? (
-                      <StatArrow type="increase" color="red.500" />
-                    ) : summary.totalRoi < 0 ? (
-                      <StatArrow type="decrease" color="green.500" />
-                    ) : (
-                      <Box as="span" mr={2}>-</Box>
-                    )}
-                    {summary.totalRoi.toFixed(2)}%
-                  </StatNumber>
-                </Skeleton>
-              </Stat>
-            </SimpleGrid>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }}>
+            <MotionGrid 
+              columns={{ base: 1, md: 4 }} 
+              spacing={6} 
+              mb={10}
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: 0.1 }}
+            >
+              {[
+                { label: '總投資成本', value: summary.totalCost, color: 'ui.navy' },
+                { label: '目前總市值', value: summary.totalValue, color: totalValueColor },
+                { label: '預估總損益', value: summary.totalPnl, color: totalPnlColor, prefix: true },
+                { label: '總投報率', value: summary.totalRoi, color: totalRoiColor, isPercent: true }
+              ].map((s, idx) => (
+                <Stat key={idx} bg="white" p={6} rounded="3xl" shadow="xl" border="1px" borderColor="gray.50">
+                  <StatLabel color="ui.slate" fontWeight="bold" fontSize="xs" textTransform="uppercase" letterSpacing="widest" mb={2}>
+                    {s.label}
+                  </StatLabel>
+                  <Skeleton isLoaded={!isDataLoading}>
+                    <StatNumber fontSize="2xl" fontWeight="extrabold" color={s.color}>
+                      {s.isPercent && <StatArrow type={s.value >= 0 ? 'increase' : 'decrease'} />}
+                      {s.isPercent ? `${s.value.toFixed(2)}%` : `$${s.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+                    </StatNumber>
+                  </Skeleton>
+                </Stat>
+              ))}
+            </MotionGrid>
 
-            {/* Added Charts */}
-            <Skeleton isLoaded={!isDataLoading} minH="300px" rounded="lg">
-              <AllocationCharts data={summary.aggregated} />
-            </Skeleton>
+            <AllocationCharts data={summary.aggregated} />
 
-            <Tabs variant="enclosed" colorScheme="blue">
-              <TabList mb={4}>
-                <Tab fontWeight="bold">我的持股</Tab>
-                <Tab fontWeight="bold">歷史成交</Tab>
-              </TabList>
-
-              <TabPanels>
-                <TabPanel p={0}>
-                  <Flex justify="flex-end" mb={4} gap={2}>
-                    <Button
-                      leftIcon={<RepeatIcon />}
-                      variant="outline"
+            <Box bg="white" p={8} rounded="3xl" shadow="2xl" border="1px" borderColor="gray.50">
+              <Tabs variant="soft-rounded" colorScheme="blue">
+                <Flex justify="space-between" align="center" mb={6}>
+                  <TabList bg="gray.100" p={1} rounded="xl">
+                    <Tab fontWeight="bold" _selected={{ bg: 'white', shadow: 'md' }}>我的持股</Tab>
+                    <Tab fontWeight="bold" _selected={{ bg: 'white', shadow: 'md' }}>歷史成交</Tab>
+                  </TabList>
+                  
+                  <HStack spacing={3}>
+                    <Button 
+                      leftIcon={<RepeatIcon />} 
+                      variant="ghost" 
                       size="sm"
                       onClick={handleManualRefresh}
                       isLoading={refreshing}
+                      rounded="xl"
                     >
-                      更新股價
+                      更新
                     </Button>
-                    <Button
-                      leftIcon={<AddIcon />}
-                      colorScheme="blue"
+                    <Button 
+                      leftIcon={<AddIcon />} 
+                      colorScheme="blue" 
                       size="sm"
                       onClick={onOpen}
+                      rounded="xl"
+                      px={6}
+                      bgGradient="linear(to-r, brand.500, brand.600)"
+                      _hover={{ bgGradient: "linear(to-r, brand.600, brand.900)" }}
                     >
                       新增持股
                     </Button>
-                  </Flex>
-                  <HoldingsTable
-                    holdings={holdings}
-                    marketData={marketData}
-                    isLoading={isDataLoading}
-                    onDataChange={() => { fetchHoldings(); fetchHistory(); }}
-                  />
-                </TabPanel>
+                  </HStack>
+                </Flex>
 
-                <TabPanel p={0}>
-                  <HistorySummary history={history} />
-                  <HistoryTable history={history} />
-                </TabPanel>
-              </TabPanels>
-            </Tabs>
+                <TabPanels>
+                  <TabPanel p={0}>
+                    <HoldingsTable 
+                      holdings={holdings} 
+                      marketData={marketData} 
+                      isLoading={isDataLoading}
+                      onDataChange={() => { fetchHoldings(); fetchHistory(); }} 
+                    />
+                  </TabPanel>
+                  <TabPanel p={0}>
+                    <HistorySummary history={history} />
+                    <HistoryTable history={history} />
+                  </TabPanel>
+                </TabPanels>
+              </Tabs>
+            </Box>
 
             <AddHoldingModal
               isOpen={isOpen}
@@ -299,20 +298,22 @@ function App() {
                 fetchMarketData()
               }}
             />
-          </>
+          </motion.div>
         )
     }
   }
 
   return (
-    <Box minH="100vh" bg="gray.50">
-      <Navbar
-        userEmail={session.user.email}
-        role={profile?.role}
+    <Box minH="100vh" bg="ui.bg">
+      <Navbar 
+        userEmail={session.user.email} 
+        role={profile?.role} 
         onNavigate={(page) => setCurrentPage(page)}
       />
-      <Container maxW="container.xl" py={8}>
-        {renderContent()}
+      <Container maxW="container.xl" py={12}>
+        <AnimatePresence mode="wait">
+          {renderContent()}
+        </AnimatePresence>
       </Container>
     </Box>
   )
