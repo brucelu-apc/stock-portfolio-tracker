@@ -33,17 +33,35 @@ interface Props {
 
 interface HoldingRowProps {
   group: AggregatedHolding
+  marketData: { [ticker: string]: any }
   onEdit: (holding: Holding) => void
   onDelete: (holding: Holding) => void
 }
 
-const HoldingRow = ({ group, onEdit, onDelete }: HoldingRowProps) => {
+const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) => {
   const { isOpen, onToggle } = useDisclosure()
   const { tp, sl } = calculateTPSL(group)
 
   const isProfit = group.unrealizedPnl >= 0
   const isUp = group.change >= 0
   const latestItem = group.items[0]
+
+  // Logic 1: Weighted Avg Price Color
+  const getAvgCostColor = () => {
+    if (!marketData[group.ticker]?.current_price) return 'black'
+    if (group.avgCost > group.currentPrice) return 'red.500'
+    if (group.avgCost < group.currentPrice) return 'green.500'
+    return 'black'
+  }
+
+  // Logic 2: Current Price Color & Placeholder
+  const hasPriceData = !!marketData[group.ticker]?.current_price
+  const getPriceColor = () => {
+    if (!hasPriceData) return 'black'
+    if (group.change > 0) return 'red.500'
+    if (group.change < 0) return 'green.500'
+    return 'black'
+  }
 
   return (
     <>
@@ -65,18 +83,22 @@ const HoldingRow = ({ group, onEdit, onDelete }: HoldingRowProps) => {
         </Td>
         <Td>{group.name}</Td>
         <Td isNumeric>{group.totalShares.toLocaleString()}</Td>
-        <Td isNumeric>{group.region === 'US' ? '$' : ''}{group.avgCost.toFixed(2)}</Td>
+        <Td isNumeric color={getAvgCostColor()} fontWeight="medium">
+          {group.region === 'US' ? '$' : ''}{group.avgCost.toFixed(2)}
+        </Td>
         
-        {/* New Columns: Latest Price, Change, Change % */}
-        <Td isNumeric fontWeight="bold">
-          {group.region === 'US' ? '$' : ''}{group.currentPrice.toFixed(2)}
+        {/* Latest Price Column */}
+        <Td isNumeric fontWeight="bold" color={getPriceColor()}>
+          {hasPriceData ? `${group.region === 'US' ? '$' : ''}${group.currentPrice.toFixed(2)}` : '-'}
         </Td>
         <Td isNumeric>
-          <HStack justify="flex-end" spacing={1} color={isUp ? 'red.500' : 'green.500'}>
-            {isUp ? <TriangleUpIcon /> : <TriangleDownIcon />}
-            <Text fontWeight="bold">{Math.abs(group.change).toFixed(2)}</Text>
-            <Text fontSize="xs">({isUp ? '+' : '-'}{Math.abs(group.changePercent).toFixed(2)}%)</Text>
-          </HStack>
+          {hasPriceData ? (
+            <HStack justify="flex-end" spacing={1} color={isUp ? 'red.500' : 'green.500'}>
+              {group.change !== 0 && (isUp ? <TriangleUpIcon /> : <TriangleDownIcon />)}
+              <Text fontWeight="bold">{Math.abs(group.change).toFixed(2)}</Text>
+              <Text fontSize="xs">({isUp ? '+' : '-'}{Math.abs(group.changePercent).toFixed(2)}%)</Text>
+            </HStack>
+          ) : '-'}
         </Td>
 
         <Td isNumeric fontWeight="semibold">
@@ -94,8 +116,8 @@ const HoldingRow = ({ group, onEdit, onDelete }: HoldingRowProps) => {
         </Td>
         <Td isNumeric>
           <VStack align="end" spacing={0} fontSize="xs">
-            <Text color="orange.600">利: {tp.toFixed(1)}</Text>
-            <Text color="blue.600">損: {sl.toFixed(1)}</Text>
+            <Text color="red.500">利: {tp.toFixed(1)}</Text>
+            <Text color="green.500" fontWeight="bold">損: {sl.toFixed(1)}</Text>
           </VStack>
         </Td>
         <Td onClick={(e: MouseEvent) => e.stopPropagation()}>
@@ -207,6 +229,7 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
                 <HoldingRow
                   key={group.ticker}
                   group={group}
+                  marketData={marketData}
                   onEdit={handleEdit}
                   onDelete={handleDelete}
                 />

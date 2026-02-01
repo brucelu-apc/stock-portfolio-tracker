@@ -15,6 +15,7 @@ def main():
     parser = argparse.ArgumentParser(description="Query portfolio data from Supabase")
     parser.add_argument("--action", choices=["list_holdings", "get_market_data", "raw_query"], required=True)
     parser.add_argument("--query", help="Optional query string or filter")
+    parser.add_argument("--user_id", help="Filter by user UUID")
     
     args = parser.parse_args()
     
@@ -29,7 +30,10 @@ def main():
 
     try:
         if args.action == "list_holdings":
-            res = supabase.table("portfolio_holdings").select("*").execute()
+            query_builder = supabase.table("portfolio_holdings").select("*")
+            if args.user_id:
+                query_builder = query_builder.eq("user_id", args.user_id)
+            res = query_builder.execute()
             print(json.dumps(res.data, indent=2))
         
         elif args.action == "get_market_data":
