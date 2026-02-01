@@ -18,13 +18,20 @@ import { supabase } from '../../services/supabase'
 interface NavbarProps {
   userEmail: string | undefined
   role: string | undefined
+  currentPage: string
   onNavigate: (page: string) => void
 }
 
-export const Navbar = ({ userEmail, role, onNavigate }: NavbarProps) => {
+export const Navbar = ({ userEmail, role, currentPage, onNavigate }: NavbarProps) => {
   const handleSignOut = async () => {
     await supabase.auth.signOut()
   }
+
+  const navItems = [
+    { label: '資產儀表板', value: 'dashboard' },
+    { label: '獲利總覽', value: 'profit' },
+    ...(role === 'admin' ? [{ label: '管理後台', value: 'admin' }] : []),
+  ]
 
   return (
     <Box
@@ -38,52 +45,53 @@ export const Navbar = ({ userEmail, role, onNavigate }: NavbarProps) => {
       borderColor="gray.100"
     >
       <Container maxW="container.xl">
-        <Flex h={20} alignItems={'center'} justifyContent={'space-between'}>
+        <Flex h={24} alignItems={'center'} justifyContent={'space-between'}>
           <HStack spacing={10}>
-            <Text 
-              fontWeight="900" 
-              fontSize="2xl" 
-              bgGradient="linear(to-r, brand.500, brand.900)" 
-              bgClip="text"
-              cursor="pointer" 
-              onClick={() => onNavigate('dashboard')}
-              letterSpacing="tighter"
-            >
-              STOCK DANGO
-            </Text>
+            <VStack align="start" spacing={0} cursor="pointer" onClick={() => onNavigate('dashboard')}>
+              <Text 
+                fontWeight="900" 
+                fontSize="2xl" 
+                bgGradient="linear(to-r, brand.500, brand.900)" 
+                bgClip="text"
+                letterSpacing="tighter"
+                lineHeight="shorter"
+              >
+                STOCK DANGO
+              </Text>
+              <Text fontSize="10px" fontWeight="bold" color="ui.slate" letterSpacing="0.2em">
+                台美股票持股追蹤器
+              </Text>
+            </VStack>
+            
             <HStack spacing={6} display={{ base: 'none', md: 'flex' }}>
-              <Text 
-                fontWeight="bold" 
-                fontSize="sm" 
-                color="ui.navy" 
-                cursor="pointer" 
-                _hover={{ color: 'brand.500' }}
-                onClick={() => onNavigate('dashboard')}
-              >
-                資產儀表板
-              </Text>
-              <Text 
-                fontWeight="bold" 
-                fontSize="sm" 
-                color="ui.navy" 
-                cursor="pointer" 
-                _hover={{ color: 'brand.500' }}
-                onClick={() => onNavigate('profit')}
-              >
-                獲利總覽
-              </Text>
-              {role === 'admin' && (
-                <Text 
-                  fontWeight="bold" 
-                  fontSize="sm" 
-                  color="purple.600" 
-                  cursor="pointer" 
-                  _hover={{ color: 'purple.400' }}
-                  onClick={() => onNavigate('admin')}
-                >
-                  管理後台
-                </Text>
-              )}
+              {navItems.map((item) => {
+                const isActive = currentPage === item.value
+                return (
+                  <Text 
+                    key={item.value}
+                    fontWeight="bold" 
+                    fontSize="sm" 
+                    color={isActive ? 'brand.500' : 'ui.navy'} 
+                    cursor="pointer" 
+                    position="relative"
+                    _hover={{ color: 'brand.500' }}
+                    onClick={() => onNavigate(item.value)}
+                  >
+                    {item.label}
+                    {isActive && (
+                      <Box 
+                        position="absolute" 
+                        bottom="-4px" 
+                        left="0" 
+                        right="0" 
+                        h="2px" 
+                        bg="brand.500" 
+                        rounded="full"
+                      />
+                    )}
+                  </Text>
+                )
+              })}
             </HStack>
           </HStack>
 

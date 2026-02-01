@@ -26,6 +26,7 @@ import {
 import { RepeatIcon, AddIcon } from '@chakra-ui/icons'
 import { supabase } from './services/supabase'
 import { AuthPage } from './components/auth/AuthPage'
+import { ResetPasswordPage } from './components/auth/ResetPasswordPage'
 import { Navbar } from './components/common/Navbar'
 import { AddHoldingModal } from './components/holdings/AddHoldingModal'
 import { HoldingsTable } from './components/holdings/HoldingsTable'
@@ -48,7 +49,7 @@ function App() {
   const [holdings, setHoldings] = useState<any[]>([])
   const [history, setHistory] = useState<any[]>([])
   const [marketData, setMarketData] = useState<{ [ticker: string]: any }>({})
-  const [currentPage, setCurrentPage] = useState('dashboard')
+  const [currentPage, setCurrentPage] = useState(window.location.pathname === '/reset-password' ? 'reset-password' : 'dashboard')
   const [refreshing, setRefreshing] = useState(false)
   const [isDataLoading, setIsDataLoading] = useState(true)
   const { isOpen, onOpen, onClose } = useDisclosure()
@@ -206,6 +207,8 @@ function App() {
         return <SettingsPage userEmail={session.user.email} status={profile?.status} onNavigate={(page) => setCurrentPage(page)} />
       case 'profit':
         return <ProfitOverview history={history} />
+      case 'reset-password':
+        return <ResetPasswordPage onComplete={() => setCurrentPage('dashboard')} />
       default:
         return (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }}>
@@ -220,7 +223,7 @@ function App() {
               {[
                 { label: '總投資成本', value: summary.totalCost, color: 'ui.navy' },
                 { label: '目前總市值', value: summary.totalValue, color: totalValueColor },
-                { label: '預估總損益', value: summary.totalPnl, color: totalPnlColor, prefix: true },
+                { label: '預估總損益', value: summary.totalPnl, color: totalPnlColor },
                 { label: '總投報率', value: summary.totalRoi, color: totalRoiColor, isPercent: true }
               ].map((s, idx) => (
                 <Stat key={idx} bg="white" p={6} rounded="3xl" shadow="xl" border="1px" borderColor="gray.50">
@@ -228,9 +231,21 @@ function App() {
                     {s.label}
                   </StatLabel>
                   <Skeleton isLoaded={!isDataLoading}>
-                    <StatNumber fontSize="2xl" fontWeight="extrabold" color={s.color}>
-                      {s.isPercent && <StatArrow type={s.value >= 0 ? 'increase' : 'decrease'} />}
-                      {s.isPercent ? `${s.value.toFixed(2)}%` : `$${s.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+                    <StatNumber fontSize="2xl" fontWeight="extrabold" color={s.color} display="flex" alignItems="center">
+                      {s.isPercent ? (
+                        <>
+                          {s.value > 0 ? (
+                            <StatArrow type="increase" color="profit" />
+                          ) : s.value < 0 ? (
+                            <StatArrow type="decrease" color="loss" />
+                          ) : (
+                            <Box as="span" mr={2} color="ui.navy">-</Box>
+                          )}
+                          {s.value.toFixed(2)}%
+                        </>
+                      ) : (
+                        `$${s.value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+                      )}
                     </StatNumber>
                   </Skeleton>
                 </Stat>
@@ -308,6 +323,7 @@ function App() {
       <Navbar 
         userEmail={session.user.email} 
         role={profile?.role} 
+        currentPage={currentPage}
         onNavigate={(page) => setCurrentPage(page)}
       />
       <Container maxW="container.xl" py={12}>
