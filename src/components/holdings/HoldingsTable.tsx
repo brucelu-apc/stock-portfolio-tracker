@@ -116,23 +116,6 @@ const HoldingRow = ({ group, priceMap, onEdit, onDelete }: HoldingRowProps) => {
                       <HStack spacing={8}>
                         <Text>股數: {item.shares}</Text>
                         <Text>價格: ${item.cost_price}</Text>
-                        <HStack spacing={1}>
-                          <IconButton
-                            aria-label="Edit"
-                            icon={<EditIcon />}
-                            size="xs"
-                            variant="ghost"
-                            onClick={() => onEdit(item)}
-                          />
-                          <IconButton
-                            aria-label="Delete"
-                            icon={<DeleteIcon />}
-                            size="xs"
-                            variant="ghost"
-                            colorScheme="red"
-                            onClick={() => onDelete(item)}
-                          />
-                        </HStack>
                       </HStack>
                     </HStack>
                   ))}
