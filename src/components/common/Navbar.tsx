@@ -45,11 +45,15 @@ export const Navbar = ({ userEmail, role, onNavigate }: NavbarProps) => {
           </HStack>
 
           <Flex alignItems={'center'}>
-            <Stack direction={'row'} spacing={7} alignItems="center">
-              <ChakraLink fontSize="sm" onClick={() => onNavigate('settings')}>
-                {userEmail}
-              </ChakraLink>
-              <Button size="sm" onClick={handleSignOut}>
+            <Stack direction={'row'} spacing={4} alignItems="center">
+              <Box textAlign="right">
+                <Text fontSize="xs" color="gray.500">登入帳號</Text>
+                <Text fontSize="sm" fontWeight="medium">{userEmail}</Text>
+              </Box>
+              <Button size="sm" variant="outline" onClick={() => onNavigate('settings')}>
+                帳號設定
+              </Button>
+              <Button size="sm" colorScheme="red" variant="ghost" onClick={handleSignOut}>
                 登出
               </Button>
             </Stack>

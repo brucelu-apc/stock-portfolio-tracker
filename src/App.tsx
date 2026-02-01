@@ -146,7 +146,7 @@ function App() {
       case 'admin':
         return <UserManagement />
       case 'settings':
-        return <SettingsPage userEmail={session.user.email} status={profile?.status} />
+        return <SettingsPage userEmail={session.user.email} status={profile?.status} onNavigate={(page) => setCurrentPage(page)} />
       default:
         return (
           <>
@@ -186,7 +186,7 @@ function App() {
               </Button>
             </Flex>
 
-            <HoldingsTable holdings={holdings} priceMap={marketData} />
+            <HoldingsTable holdings={holdings} priceMap={marketData} onDataChange={fetchHoldings} />
 
             <AddHoldingModal
               isOpen={isOpen}
@@ -203,9 +203,9 @@ function App() {
 
   return (
     <Box minH="100vh" bg="gray.50">
-      <Navbar 
-        userEmail={session.user.email} 
-        role={profile?.role} 
+      <Navbar
+        userEmail={session.user.email}
+        role={profile?.role}
         onNavigate={(page) => setCurrentPage(page)}
       />
       <Container maxW="container.xl" py={8}>

@@ -35,26 +35,26 @@ export interface AggregatedHolding {
 
 export const aggregateHoldings = (holdings: Holding[], priceMap: { [ticker: string]: number }): AggregatedHolding[] => {
   const groups: { [key: string]: Holding[] } = {}
-  
+
   holdings.forEach(h => {
     if (!groups[h.ticker]) groups[h.ticker] = []
     groups[h.ticker].push(h)
   })
 
   return Object.keys(groups).map(ticker => {
-    const items = groups[ticker].sort((a, b) => 
+    const items = groups[ticker].sort((a, b) =>
       new Date(b.buy_date).getTime() - new Date(a.buy_date).getTime()
     )
-    
+
     const latest = items[0]
     const totalShares = items.reduce((sum, item) => sum + item.shares, 0)
     const totalCost = items.reduce((sum, item) => sum + (item.shares * item.cost_price), 0)
     const avgCost = totalShares > 0 ? totalCost / totalShares : 0
 
     // Get real price from map, fallback to avgCost if missing (0% PnL) to avoid NaN
-    const currentPrice = priceMap[ticker] || avgCost 
-    const fxRate = region === 'US' ? (priceMap['USDTWD'] || 32.5) : 1
-    
+    const currentPrice = priceMap[ticker] || avgCost
+    const fxRate = latest.region === 'US' ? (priceMap['USDTWD'] || 32.5) : 1
+
     // Values in TWD for summary consistency
     const totalCostTWD = totalCost * fxRate
     const marketValueTWD = (currentPrice * totalShares) * fxRate
@@ -94,7 +94,7 @@ export const calculateTPSL = (holding: AggregatedHolding) => {
   // Auto Trailing logic: MAX(Cost * 1.1, HighWatermark * 0.9)
   const baseTP = holding.avgCost * 1.1
   const trailingTP = (holding.highWatermark || holding.avgCost) * 0.9
-  
+
   return {
     tp: Math.max(baseTP, trailingTP),
     sl: holding.avgCost // Breakeven

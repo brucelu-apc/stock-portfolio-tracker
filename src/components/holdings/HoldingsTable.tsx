@@ -14,35 +14,48 @@ import {
   Box,
   useDisclosure,
   VStack,
+  useToast,
 } from '@chakra-ui/react'
 import { EditIcon, DeleteIcon, ChevronDownIcon, ChevronUpIcon } from '@chakra-ui/icons'
 import { MouseEvent } from 'react'
 import { AggregatedHolding, aggregateHoldings, calculateTPSL, Holding } from '../../utils/calculations'
+import { supabase } from '../../services/supabase'
 
 interface Props {
   holdings: Holding[]
   priceMap: { [ticker: string]: number }
+  onDataChange?: () => void
 }
 
-const HoldingRow = ({ group, key: _key }: { group: AggregatedHolding; key?: string }) => {
+interface HoldingRowProps {
+  group: AggregatedHolding
+  onEdit: (holding: Holding) => void
+  onDelete: (id: string) => void
+}
+
+const HoldingRow = ({ group, onEdit, onDelete }: HoldingRowProps) => {
   const { isOpen, onToggle } = useDisclosure()
   const { tp, sl } = calculateTPSL(group)
 
-  // Logic moved to aggregateHoldings, now just display parameters
   const isProfit = group.unrealizedPnl >= 0
+  const latestItem = group.items[0]
 
   return (
     <>
       <Tr cursor="pointer" onClick={onToggle} _hover={{ bg: 'gray.50' }}>
         <Td>
-          <HStack>
-            {group.isMultiple ? (isOpen ? <ChevronUpIcon /> : <ChevronDownIcon />) : null}
+          <HStack spacing={2}>
             <VStack align="start" spacing={0}>
               <Text fontWeight="bold">{group.ticker}</Text>
               <Badge size="xs" colorScheme={group.region === 'TPE' ? 'teal' : 'orange'}>
                 {group.region}
               </Badge>
             </VStack>
+            {group.isMultiple && (
+              <Box color="gray.400">
+                {isOpen ? <ChevronUpIcon /> : <ChevronDownIcon />}
+              </Box>
+            )}
           </HStack>
         </Td>
         <Td>{group.name}</Td>
@@ -69,8 +82,21 @@ const HoldingRow = ({ group, key: _key }: { group: AggregatedHolding; key?: stri
         </Td>
         <Td onClick={(e: MouseEvent) => e.stopPropagation()}>
           <HStack spacing={2}>
-            <IconButton aria-label="Edit" icon={<EditIcon />} size="sm" variant="ghost" />
-            <IconButton aria-label="Delete" icon={<DeleteIcon />} size="sm" variant="ghost" colorScheme="red" />
+            <IconButton
+              aria-label="Edit"
+              icon={<EditIcon />}
+              size="sm"
+              variant="ghost"
+              onClick={() => onEdit(latestItem)}
+            />
+            <IconButton
+              aria-label="Delete"
+              icon={<DeleteIcon />}
+              size="sm"
+              variant="ghost"
+              colorScheme="red"
+              onClick={() => onDelete(latestItem.id)}
+            />
           </HStack>
         </Td>
       </Tr>
@@ -88,6 +114,23 @@ const HoldingRow = ({ group, key: _key }: { group: AggregatedHolding; key?: stri
                       <HStack spacing={8}>
                         <Text>股數: {item.shares}</Text>
                         <Text>價格: ${item.cost_price}</Text>
+                        <HStack spacing={1}>
+                          <IconButton
+                            aria-label="Edit"
+                            icon={<EditIcon />}
+                            size="xs"
+                            variant="ghost"
+                            onClick={() => onEdit(item)}
+                          />
+                          <IconButton
+                            aria-label="Delete"
+                            icon={<DeleteIcon />}
+                            size="xs"
+                            variant="ghost"
+                            colorScheme="red"
+                            onClick={() => onDelete(item.id)}
+                          />
+                        </HStack>
                       </HStack>
                     </HStack>
                   ))}
@@ -101,8 +144,34 @@ const HoldingRow = ({ group, key: _key }: { group: AggregatedHolding; key?: stri
   )
 }
 
-export const HoldingsTable = ({ holdings, priceMap }: Props) => {
+export const HoldingsTable = ({ holdings, priceMap, onDataChange }: Props) => {
   const aggregatedData = aggregateHoldings(holdings, priceMap)
+  const toast = useToast()
+
+  const handleEdit = (holding: Holding) => {
+    // TODO: Open edit modal with holding data
+    toast({
+      title: '編輯功能開發中',
+      description: `編輯 ${holding.ticker} (${holding.buy_date})`,
+      status: 'info'
+    })
+  }
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('確定要刪除這筆持股記錄嗎？')) return
+
+    const { error } = await supabase
+      .from('portfolio_holdings')
+      .delete()
+      .eq('id', id)
+
+    if (error) {
+      toast({ title: '刪除失敗', description: error.message, status: 'error' })
+    } else {
+      toast({ title: '刪除成功', status: 'success' })
+      onDataChange?.()
+    }
+  }
 
   return (
     <TableContainer bg="white" rounded="lg" shadow="sm" border="1px" borderColor="gray.100">
@@ -128,7 +197,12 @@ export const HoldingsTable = ({ holdings, priceMap }: Props) => {
             </Tr>
           ) : (
             aggregatedData.map((group) => (
-              <HoldingRow key={group.ticker} group={group} />
+              <HoldingRow
+                key={group.ticker}
+                group={group}
+                onEdit={handleEdit}
+                onDelete={handleDelete}
+              />
             ))
           )}
         </Tbody>
