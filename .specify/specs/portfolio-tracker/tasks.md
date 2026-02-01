@@ -33,9 +33,17 @@
     - [ ] Apply TW Stock colors (Red/Green) to P&L columns.
 
 ## Phase 4: Automation & Deployment
-- [ ] **Python Script**
-    - [ ] Write `scripts/update_market_data.py` using `yfinance`.
-    - [ ] Implement High Watermark update logic in Python.
-- [ ] **CI/CD**
-    - [ ] Configure `.github/workflows/market-update.yml`.
-    - [ ] Configure Vercel deployment for frontend.
+- [x] **Python Script**
+- [x] **CI/CD**
+
+## Phase 5: Optimization & Visuals
+- [ ] **Asset Allocation Charts**
+    - [ ] Install `recharts` library.
+    - [ ] Create `AllocationCharts` component.
+    - [ ] Implement Pie chart for Region (TW vs US).
+    - [ ] Implement Pie chart for Individual Symbols (Portfolio Concentration).
+- [ ] **UX Improvements**
+    - [ ] Add loading skeletons.
+    - [ ] Form validation enhancements.
+- [ ] **Notification System**
+    - [ ] Research/Implement TP/SL alerts via LINE/Discord.

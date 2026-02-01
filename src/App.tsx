@@ -28,6 +28,7 @@ import { AuthPage } from './components/auth/AuthPage'
 import { Navbar } from './components/common/Navbar'
 import { AddHoldingModal } from './components/holdings/AddHoldingModal'
 import { HoldingsTable } from './components/holdings/HoldingsTable'
+import { AllocationCharts } from './components/dashboard/AllocationCharts'
 import { HistoryTable } from './components/holdings/HistoryTable'
 import { UserManagement } from './components/admin/UserManagement'
 import { SettingsPage } from './components/settings/SettingsPage'
@@ -213,6 +214,9 @@ function App() {
                 </StatNumber>
               </Stat>
             </SimpleGrid>
+
+            {/* Added Charts */}
+            <AllocationCharts data={summary.aggregated} />
 
             <Tabs variant="enclosed" colorScheme="blue">
               <TabList mb={4}>
