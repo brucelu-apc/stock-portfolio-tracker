@@ -191,6 +191,10 @@ function App() {
       )
     }
 
+    const totalValueColor = summary.totalValue > summary.totalCost ? "red.500" : summary.totalValue < summary.totalCost ? "green.500" : "black";
+    const totalPnlColor = summary.totalPnl > 0 ? "red.500" : summary.totalPnl < 0 ? "green.500" : "black";
+    const totalRoiColor = summary.totalRoi > 0 ? "red.500" : summary.totalRoi < 0 ? "green.500" : "black";
+
     switch (currentPage) {
       case 'admin':
         return <UserManagement />
@@ -211,13 +215,13 @@ function App() {
               <Stat bg="white" p={4} rounded="lg" shadow="sm">
                 <StatLabel color="gray.500">目前總市值</StatLabel>
                 <Skeleton isLoaded={!isDataLoading}>
-                  <StatNumber>${summary.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</StatNumber>
+                  <StatNumber color={totalValueColor}>${summary.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</StatNumber>
                 </Skeleton>
               </Stat>
               <Stat bg="white" p={4} rounded="lg" shadow="sm">
                 <StatLabel color="gray.500">預估總損益</StatLabel>
                 <Skeleton isLoaded={!isDataLoading}>
-                  <StatNumber color={summary.totalPnl >= 0 ? "red.500" : "green.500"}>
+                  <StatNumber color={totalPnlColor}>
                     {summary.totalPnl >= 0 ? '+' : ''}
                     {summary.totalPnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                   </StatNumber>
@@ -226,8 +230,14 @@ function App() {
               <Stat bg="white" p={4} rounded="lg" shadow="sm">
                 <StatLabel color="gray.500">總投報率</StatLabel>
                 <Skeleton isLoaded={!isDataLoading}>
-                  <StatNumber color={summary.totalRoi >= 0 ? "red.500" : "green.500"}>
-                    <StatArrow type={summary.totalRoi >= 0 ? 'increase' : 'decrease'} />
+                  <StatNumber color={totalRoiColor} display="flex" alignItems="center">
+                    {summary.totalRoi > 0 ? (
+                      <StatArrow type="increase" color="red.500" />
+                    ) : summary.totalRoi < 0 ? (
+                      <StatArrow type="decrease" color="green.500" />
+                    ) : (
+                      <Box as="span" mr={2}>-</Box>
+                    )}
                     {summary.totalRoi.toFixed(2)}%
                   </StatNumber>
                 </Skeleton>
