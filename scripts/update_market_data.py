@@ -38,140 +38,122 @@ def update_market_data():
     
     if not holdings:
         print("No active holdings found.")
+    else:
+        # Create a unique list of tickers formatted for yfinance
+        ticker_map = {}
+        for h in holdings:
+            ticker = h['ticker']
+            # yfinance format for TW is 2330.TW
+            yf_ticker = ticker if h['region'] == 'US' else f"{ticker}.TW"
+            ticker_map[yf_ticker] = ticker
+
+        # 4. Batch fetch stock prices
+        print(f"Updating prices for {len(ticker_map)} tickers...")
+        if ticker_map:
+            tickers_str = " ".join(ticker_map.keys())
+            data = yf.download(tickers_str, period="1d", group_by='ticker', progress=False)
+
+            for yf_code, original_ticker in ticker_map.items():
+                try:
+                    # Handle single ticker vs multiple tickers return format
+                    ticker_data = data[yf_code] if len(ticker_map) > 1 else data
+                    
+                    if not ticker_data.empty:
+                        current_price = ticker_data['Close'].iloc[-1]
+                        prev_close = ticker_data['Open'].iloc[-1]
+
+                        supabase.table("market_data").upsert({
+                            "ticker": original_ticker,
+                            "region": "US" if "." not in yf_code else "TPE",
+                            "current_price": current_price,
+                            "prev_close": prev_close,
+                            "updated_at": datetime.now().isoformat()
+                        }).execute()
+                        print(f"Updated {original_ticker}: {current_price}")
+                except Exception as e:
+                    print(f"Failed to update {original_ticker}: {e}")
+
+    # 5. Update High Watermarks & Check for Alerts (SL within +/- 2%)
+    print("Checking for Stop Loss alerts...")
+    all_holdings = supabase.table("portfolio_holdings") \
+        .select("id, user_id, ticker, cost_price, high_watermark_price") \
+        .execute()
+
+    alerts = []
+
+    for holding in all_holdings.data:
+        ticker = holding['ticker']
+        # Get latest price from market_data table
+        market_res = supabase.table("market_data").select("current_price").eq("ticker", ticker).execute()
+        
+        if market_res.data:
+            current_price = float(market_res.data[0]['current_price'])
+            avg_cost = float(holding['cost_price'])
+            old_hwm = float(holding['high_watermark_price'] or avg_cost)
+            
+            # Update High Watermark (for UI/Analysis, still useful)
+            if current_price > old_hwm:
+                supabase.table("portfolio_holdings").update({
+                    "high_watermark_price": current_price
+                }).eq("id", holding['id']).execute()
+                print(f"New High Watermark for {ticker}: {current_price}")
+
+            # NEW Stop Loss Alert Logic: within +/- 2% of cost price
+            # Range: [Cost * 0.98, Cost * 1.02]
+            lower_bound = avg_cost * 0.98
+            upper_bound = avg_cost * 1.02
+            
+            if lower_bound <= current_price <= upper_bound:
+                alerts.append({
+                    "user_id": holding['user_id'],
+                    "ticker": ticker,
+                    "price": current_price,
+                    "sl_price": avg_cost,
+                    "type": "STOP_LOSS_WARNING"
+                })
+
+    # 6. Send Alerts via OpenClaw Gateway
+    if alerts:
+        send_alerts_to_openclaw(alerts)
+
+    print("Market data update and alert check completed.")
+
+def send_alerts_to_openclaw(alerts):
+    """Send stock alerts via OpenClaw Gateway API"""
+    gateway_url = os.environ.get("OPENCLAW_GATEWAY_URL")
+    gateway_token = os.environ.get("OPENCLAW_GATEWAY_TOKEN")
+    target_user = os.environ.get("NOTIFICATION_TARGET_ID")
+
+    if not gateway_url or not gateway_token or not target_user:
+        print("Warning: Missing OpenClaw notification settings (URL, Token, or Target ID).")
         return
 
-    # Create a unique list of tickers formatted for yfinance
-    ticker_map = {}
-    for h in holdings:
-        ticker = h['ticker']
-        # yfinance format for TW is 2330.TW
-        yf_ticker = ticker if h['region'] == 'US' else f"{ticker}.TW"
-        ticker_map[yf_ticker] = ticker
+    # Clean URL (ensure no trailing slash for endpoint construction)
+    base_url = gateway_url.rstrip("/")
+    endpoint = f"{base_url}/api/v1/message"
+    headers = {
+        "Authorization": f"Bearer {gateway_token}",
+        "Content-Type": "application/json"
+    }
 
-    # 4. Batch fetch stock prices
-    print(f"Updating prices for {len(ticker_map)} tickers...")
-    if ticker_map:
-        tickers_str = " ".join(ticker_map.keys())
-        data = yf.download(tickers_str, period="1d", group_by='ticker', progress=False)
-
-        for yf_code, original_ticker in ticker_map.items():
-            try:
-                # Handle single ticker vs multiple tickers return format
-                ticker_data = data[yf_code] if len(ticker_map) > 1 else data
-                
-                if not ticker_data.empty:
-                    current_price = ticker_data['Close'].iloc[-1]
-                    prev_close = ticker_data['Open'].iloc[-1] # Simple approximation
-
-                    supabase.table("market_data").upsert({
-                        "ticker": original_ticker,
-                        "region": "US" if "." not in yf_code else "TPE",
-                        "current_price": current_price,
-                        "prev_close": prev_close,
-                        "updated_at": datetime.now().isoformat()
-                    }).execute()
-                    print(f"Updated {original_ticker}: {current_price}")
-            except Exception as e:
-                print(f"Failed to update {original_ticker}: {e}")
-
-    print("Market data update completed.")
-
-    # ============================================================
-    # TODO: Alert system - 等待邏輯修改完成後再啟用
-    # ============================================================
-    # # 5. Update High Watermarks & Check for Alerts
-    # print("Updating high watermarks and checking for alerts...")
-    # auto_holdings = supabase.table("portfolio_holdings") \
-    #     .select("id, user_id, ticker, cost_price, buy_fee, strategy_mode, high_watermark_price, manual_tp, manual_sl") \
-    #     .eq("strategy_mode", "auto").execute()
-    #
-    # alerts = []
-    #
-    # for holding in auto_holdings.data:
-    #     ticker = holding['ticker']
-    #     market_res = supabase.table("market_data").select("current_price").eq("ticker", ticker).execute()
-    #     
-    #     if market_res.data:
-    #         current_price = float(market_res.data[0]['current_price'])
-    #         old_hwm = float(holding['high_watermark_price'] or 0)
-    #         avg_cost = float(holding['cost_price'])
-    #         
-    #         # Update High Watermark
-    #         if current_price > old_hwm:
-    #             supabase.table("portfolio_holdings").update({
-    #                 "high_watermark_price": current_price
-    #             }).eq("id", holding['id']).execute()
-    #             old_hwm = current_price
-    #             print(f"New High Watermark for {ticker}: {current_price}")
-    #
-    #         # Alert Logic: MAX(Cost*1.1, HWM*0.9)
-    #         tp_threshold = max(avg_cost * 1.1, old_hwm * 0.9)
-    #         sl_threshold = avg_cost # Breakeven protection
-    #         
-    #         if current_price >= tp_threshold:
-    #             alerts.append({
-    #                 "user_id": holding['user_id'],
-    #                 "ticker": ticker,
-    #                 "price": current_price,
-    #                 "threshold": tp_threshold,
-    #                 "type": "TAKE_PROFIT"
-    #             })
-    #         elif current_price <= sl_threshold:
-    #             alerts.append({
-    #                 "user_id": holding['user_id'],
-    #                 "ticker": ticker,
-    #                 "price": current_price,
-    #                 "threshold": sl_threshold,
-    #                 "type": "STOP_LOSS"
-    #             })
-    #
-    # # 6. Send Alerts via LINE Messaging API
-    # if alerts:
-    #     send_alerts_line_messaging(alerts)
-
-
-# ============================================================
-# TODO: LINE Messaging API - 等待邏輯修改完成後再啟用
-# ============================================================
-# def send_alerts_line_messaging(alerts):
-#     """Send stock alerts via LINE Messaging API (Push Message)"""
-#     channel_token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
-#     user_id = os.environ.get("LINE_USER_ID")
-#     
-#     if not channel_token or not user_id:
-#         print("Warning: Missing LINE Messaging API settings (LINE_CHANNEL_ACCESS_TOKEN, LINE_USER_ID).")
-#         return
-#     
-#     url = "https://api.line.me/v2/bot/message/push"
-#     headers = {
-#         "Content-Type": "application/json",
-#         "Authorization": f"Bearer {channel_token}"
-#     }
-#     
-#     for a in alerts:
-#         alert_type = "移動停利" if a['type'] == "TAKE_PROFIT" else "停損保護"
-#         msg_text = f"🔔 【投資預警】\n代碼：{a['ticker']}\n現價：${a['price']:.2f}\n觸發：{alert_type}\n門檻：${a['threshold']:.2f}\n建議：請考慮操作！🍡"
-#         
-#         payload = {
-#             "to": user_id,
-#             "messages": [
-#                 {
-#                     "type": "text",
-#                     "text": msg_text
-#                 }
-#             ]
-#         }
-#         
-#         try:
-#             response = requests.post(url, headers=headers, json=payload)
-#             if response.status_code == 200:
-#                 print(f"Alert sent for {a['ticker']}")
-#             else:
-#                 error_msg = response.json().get('message', response.status_code)
-#                 print(f"Failed to send alert: {error_msg}")
-#         except Exception as e:
-#             print(f"Error sending LINE message: {e}")
-
+    for a in alerts:
+        msg = f"⚠️ 【停損預警】\n代碼：{a['ticker']}\n現價：${a['price']:.2f}\n停損價：${a['sl_price']:.2f}\n狀態：股價已進入停損價 +/-2% 警戒區！🍡"
+        
+        payload = {
+            "action": "send",
+            "channel": "line",
+            "target": target_user,
+            "message": msg
+        }
+        
+        try:
+            response = requests.post(endpoint, json=payload, headers=headers)
+            if response.status_code == 200:
+                print(f"Alert sent for {a['ticker']}")
+            else:
+                print(f"Failed to send alert for {a['ticker']}: {response.text}")
+        except Exception as e:
+            print(f"Error calling OpenClaw Gateway: {e}")
 
 if __name__ == "__main__":
     update_market_data()
