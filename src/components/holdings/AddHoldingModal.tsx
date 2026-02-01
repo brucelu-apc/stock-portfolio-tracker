@@ -43,6 +43,13 @@ export const AddHoldingModal = ({ isOpen, onClose, onSuccess }: Props) => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('未登入')
 
+      const costPriceNum = parseFloat(price)
+      const sharesNum = parseFloat(shares)
+      const buyFeeNum = parseFloat(buyFee) || 0
+
+      if (isNaN(costPriceNum) || costPriceNum <= 0) throw new Error('請輸入有效的買入價格')
+      if (isNaN(sharesNum) || sharesNum <= 0) throw new Error('請輸入有效的持有股數')
+
       // Validate ticker based on region
       const tickerClean = ticker.trim().toUpperCase()
       if (region === 'US' && !/^[A-Z]+$/.test(tickerClean)) {

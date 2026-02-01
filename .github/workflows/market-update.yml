@@ -29,4 +29,7 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          OPENCLAW_GATEWAY_URL: ${{ secrets.OPENCLAW_GATEWAY_URL }}
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+          NOTIFICATION_TARGET_ID: ${{ secrets.NOTIFICATION_TARGET_ID }}
         run: python scripts/update_market_data.py

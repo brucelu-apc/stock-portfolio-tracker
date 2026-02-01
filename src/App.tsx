@@ -46,6 +46,7 @@ function App() {
   const [marketData, setMarketData] = useState<{ [ticker: string]: any }>({})
   const [currentPage, setCurrentPage] = useState('dashboard')
   const [refreshing, setRefreshing] = useState(false)
+  const [isDataLoading, setIsDataLoading] = useState(true) // Added data loading state
   const { isOpen, onOpen, onClose } = useDisclosure()
   const toast = useToast()
 
@@ -53,12 +54,15 @@ function App() {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session)
       if (session) {
-        fetchProfile(session.user.id)
-        fetchHoldings()
-        fetchHistory()
-        fetchMarketData()
+        Promise.all([
+          fetchProfile(session.user.id),
+          fetchHoldings(),
+          fetchHistory(),
+          fetchMarketData()
+        ]).then(() => setIsDataLoading(false))
+      } else {
+        setLoading(false)
       }
-      setLoading(false)
     })
 
     const {
@@ -197,30 +201,40 @@ function App() {
             <SimpleGrid columns={{ base: 1, md: 4 }} spacing={6} mb={8}>
               <Stat bg="white" p={4} rounded="lg" shadow="sm">
                 <StatLabel color="gray.500">總投資成本</StatLabel>
-                <StatNumber>${summary.totalCost.toLocaleString(undefined, { maximumFractionDigits: 0 })}</StatNumber>
+                <Skeleton isLoaded={!isDataLoading}>
+                  <StatNumber>${summary.totalCost.toLocaleString(undefined, { maximumFractionDigits: 0 })}</StatNumber>
+                </Skeleton>
               </Stat>
               <Stat bg="white" p={4} rounded="lg" shadow="sm">
                 <StatLabel color="gray.500">目前總市值</StatLabel>
-                <StatNumber>${summary.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</StatNumber>
+                <Skeleton isLoaded={!isDataLoading}>
+                  <StatNumber>${summary.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</StatNumber>
+                </Skeleton>
               </Stat>
               <Stat bg="white" p={4} rounded="lg" shadow="sm">
                 <StatLabel color="gray.500">預估總損益</StatLabel>
-                <StatNumber color={summary.totalPnl >= 0 ? "red.500" : "green.500"}>
-                  {summary.totalPnl >= 0 ? '+' : ''}
-                  {summary.totalPnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                </StatNumber>
+                <Skeleton isLoaded={!isDataLoading}>
+                  <StatNumber color={summary.totalPnl >= 0 ? "red.500" : "green.500"}>
+                    {summary.totalPnl >= 0 ? '+' : ''}
+                    {summary.totalPnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  </StatNumber>
+                </Skeleton>
               </Stat>
               <Stat bg="white" p={4} rounded="lg" shadow="sm">
                 <StatLabel color="gray.500">總投報率</StatLabel>
-                <StatNumber color={summary.totalRoi >= 0 ? "red.500" : "green.500"}>
-                  <StatArrow type={summary.totalRoi >= 0 ? 'increase' : 'decrease'} />
-                  {summary.totalRoi.toFixed(2)}%
-                </StatNumber>
+                <Skeleton isLoaded={!isDataLoading}>
+                  <StatNumber color={summary.totalRoi >= 0 ? "red.500" : "green.500"}>
+                    <StatArrow type={summary.totalRoi >= 0 ? 'increase' : 'decrease'} />
+                    {summary.totalRoi.toFixed(2)}%
+                  </StatNumber>
+                </Skeleton>
               </Stat>
             </SimpleGrid>
 
             {/* Added Charts */}
-            <AllocationCharts data={summary.aggregated} />
+            <Skeleton isLoaded={!isDataLoading} minH="300px" rounded="lg">
+              <AllocationCharts data={summary.aggregated} />
+            </Skeleton>
 
             <Tabs variant="enclosed" colorScheme="blue">
               <TabList mb={4}>
@@ -252,6 +266,7 @@ function App() {
                   <HoldingsTable 
                     holdings={holdings} 
                     marketData={marketData} 
+                    isLoading={isDataLoading}
                     onDataChange={() => { fetchHoldings(); fetchHistory(); }} 
                   />
                 </TabPanel>

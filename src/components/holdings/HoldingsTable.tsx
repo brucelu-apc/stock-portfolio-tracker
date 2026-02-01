@@ -15,6 +15,7 @@ import {
   useDisclosure,
   VStack,
   useToast,
+  Skeleton,
 } from '@chakra-ui/react'
 import { EditIcon, DeleteIcon, ChevronDownIcon, ChevronUpIcon, TriangleUpIcon, TriangleDownIcon } from '@chakra-ui/icons'
 import { MouseEvent, useState } from 'react'
@@ -27,6 +28,7 @@ interface Props {
   holdings: Holding[]
   marketData: { [ticker: string]: any }
   onDataChange?: () => void
+  isLoading?: boolean
 }
 
 interface HoldingRowProps {
@@ -143,7 +145,7 @@ const HoldingRow = ({ group, onEdit, onDelete }: HoldingRowProps) => {
   )
 }
 
-export const HoldingsTable = ({ holdings, marketData, onDataChange }: Props) => {
+export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }: Props) => {
   const aggregatedData = aggregateHoldings(holdings, marketData)
   const toast = useToast()
   const [selectedHolding, setSelectedHolding] = useState<Holding | null>(null)
@@ -179,7 +181,22 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange }: Props) => 
             </Tr>
           </Thead>
           <Tbody>
-            {aggregatedData.length === 0 ? (
+            {isLoading ? (
+              [...Array(3)].map((_, i) => (
+                <Tr key={i}>
+                  <Td><Skeleton h="20px" /></Td>
+                  <Td><Skeleton h="20px" /></Td>
+                  <Td><Skeleton h="20px" /></Td>
+                  <Td><Skeleton h="20px" /></Td>
+                  <Td><Skeleton h="20px" /></Td>
+                  <Td><Skeleton h="20px" /></Td>
+                  <Td><Skeleton h="20px" /></Td>
+                  <Td><Skeleton h="20px" /></Td>
+                  <Td><Skeleton h="20px" /></Td>
+                  <Td><Skeleton h="20px" /></Td>
+                </Tr>
+              ))
+            ) : aggregatedData.length === 0 ? (
               <Tr>
                 <Td colSpan={10} textAlign="center" py={10}>
                   目前沒有持股，請點擊「新增持股」按鈕。
