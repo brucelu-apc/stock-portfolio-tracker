@@ -53,9 +53,13 @@ export const aggregateHoldings = (holdings: Holding[], priceMap: { [ticker: stri
 
     // Get real price from map, fallback to avgCost if missing (0% PnL) to avoid NaN
     const currentPrice = priceMap[ticker] || avgCost 
-    const marketValue = currentPrice * totalShares
-    const unrealizedPnl = marketValue - totalCost
-    const roi = totalCost > 0 ? (unrealizedPnl / totalCost) * 100 : 0
+    const fxRate = region === 'US' ? (priceMap['USDTWD'] || 32.5) : 1
+    
+    // Values in TWD for summary consistency
+    const totalCostTWD = totalCost * fxRate
+    const marketValueTWD = (currentPrice * totalShares) * fxRate
+    const unrealizedPnlTWD = marketValueTWD - totalCostTWD
+    const roi = totalCost > 0 ? (unrealizedPnlTWD / totalCostTWD) * 100 : 0
 
     return {
       ticker,
@@ -63,10 +67,10 @@ export const aggregateHoldings = (holdings: Holding[], priceMap: { [ticker: stri
       region: latest.region,
       totalShares,
       avgCost,
-      totalCost,
+      totalCost: totalCostTWD, // Now in TWD
       currentPrice,
-      marketValue,
-      unrealizedPnl,
+      marketValue: marketValueTWD, // Now in TWD
+      unrealizedPnl: unrealizedPnlTWD, // Now in TWD
       roi,
       latestDate: latest.buy_date,
       isMultiple: items.length > 1,

@@ -12,6 +12,7 @@ import {
   Link,
   Card,
   CardBody,
+  Divider,
 } from '@chakra-ui/react'
 import { supabase } from '../../services/supabase'
 
@@ -52,12 +53,46 @@ export const AuthPage = () => {
     }
   }
 
+  const handleGoogleLogin = async () => {
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin
+        }
+      })
+      if (error) throw error
+    } catch (error: any) {
+      toast({
+        title: 'Google 登入失敗',
+        description: error.message,
+        status: 'error',
+      })
+    }
+  }
+
   return (
     <Box minH="100vh" display="flex" alignItems="center" justifyContent="center" bg="gray.50">
       <Card w="full" maxW="md" shadow="lg">
         <CardBody>
           <VStack spacing={6}>
             <Heading size="lg">{isSignUp ? '建立帳號' : '登入系統'}</Heading>
+            
+            <Button 
+              leftIcon={<Box as="span">G</Box>} 
+              w="full" 
+              variant="outline" 
+              onClick={handleGoogleLogin}
+            >
+              使用 Google 帳號繼續
+            </Button>
+
+            <Box w="full" display="flex" alignItems="center">
+              <Divider />
+              <Text px={2} color="gray.400" fontSize="xs">或</Text>
+              <Divider />
+            </Box>
+
             <form style={{ width: '100%' }} onSubmit={handleAuth}>
               <VStack spacing={4}>
                 <FormControl isRequired>

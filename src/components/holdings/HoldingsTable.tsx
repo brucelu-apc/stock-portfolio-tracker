@@ -47,9 +47,9 @@ const HoldingRow = ({ group, key: _key }: { group: AggregatedHolding; key?: stri
         </Td>
         <Td>{group.name}</Td>
         <Td isNumeric>{group.totalShares.toLocaleString()}</Td>
-        <Td isNumeric>${group.avgCost.toFixed(2)}</Td>
+        <Td isNumeric>{group.region === 'US' ? '$' : ''}{group.avgCost.toFixed(2)}</Td>
         <Td isNumeric fontWeight="semibold">
-          ${group.marketValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          {group.marketValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
         </Td>
         <Td isNumeric>
           <VStack align="end" spacing={0}>

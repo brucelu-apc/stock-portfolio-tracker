@@ -7,14 +7,38 @@
 - As a user, I want to "Sell All" or "Adjust Position" (Edit) for a stock, and have the system auto-archive historical data.
 - As a user, I want stock prices and exchange rates to auto-update daily.
 - As a user, I want advanced Take Profit (TP) and Stop Loss (SL) strategies, including manual override and trailing stop.
+- As a user, I want to sign up using either my email or my Google account.
+- As an administrator, I want to review and manage user applications and roles.
 
 ## Functional Requirements
 
-### 1. Authentication
-- **Provider**: Supabase Auth (Email/Password).
-- **Security**: Row Level Security (RLS) ensures users only access their own data.
+### 1. Authentication & Authorization
+- **Providers**: 
+    - Supabase Auth (Email/Password).
+    - Google OAuth (Social Login).
+- **Default Admin**: `sys@stockadmin.tw` (Initial password: `Admin`).
+- **Roles**:
+    - `Admin`: Can view and manage all users.
+    - `User`: Standard access.
+- **Account Status**:
+    - `Pending`: Default status after signup. User can login but might have restricted access until approved.
+    - `Enabled`: Full access.
+    - `Rejected`: Access denied.
+    - `Disabled`: Account locked by admin.
+- **User Actions**:
+    - Change password (applicable for Email/Password users only).
 
-### 2. Portfolio Management (Core Logic)
+### 2. Administrator Management Panel
+- **User Management Table**:
+    - View list of all registered users.
+    - Fields: Email, Role, Status, Signup Date.
+    - **Actions (Admin only)**: 
+        - Toggle Role between `User` and `Admin`.
+        - Change Status (`Pending`, `Enabled`, `Rejected`, `Disabled`).
+- **User View**:
+    - Users can view their current status in their profile/settings page.
+
+### 3. Portfolio Management (Core Logic)
 
 #### A. Add Holding (UI)
 - **Fields**: Region (TPE/US), Ticker, Name, Price, Shares, Date.
@@ -46,7 +70,7 @@
 - **Delete**: Sell All -> Archive all entries to history.
 - **Edit**: Adjust Position -> Archive old, create new consolidated entry (maintaining Weighted Avg Cost).
 
-### 3. Data & Scheduling
+### 4. Data & Scheduling
 - **Source**: **yfinance** (Python) via GitHub Actions (Daily Cron).
 - **Tasks**:
     1. Fetch latest stock prices & exchange rates.
@@ -56,7 +80,9 @@
         - If yes, update `high_watermark_price`.
         - (This automatically lifts the TP price in the UI).
 
-### 4. Database Schema (Draft)
+### 5. Database Schema (Draft)
+- **user_profiles**: (Links to `auth.users`)
+    - `id` (references auth.users), `email`, `role`, `status`, `updated_at`.
 - **portfolio_holdings**: 
     - `id`, `user_id`, `ticker`, `region`, `shares`, `cost_price`, `buy_date`
     - `is_multiple` (bool)
