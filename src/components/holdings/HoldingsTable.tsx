@@ -58,8 +58,13 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
 
   // Logic 2: Current Price Color & Placeholder
   const hasPriceData = !!marketData[group.ticker]?.current_price
-  const isPriceUp = hasPriceData && (marketData[group.ticker].current_price > marketData[group.ticker].prev_close)
-  const isPriceDown = hasPriceData && (marketData[group.ticker].current_price < marketData[group.ticker].prev_close)
+  const currentPrice = marketData[group.ticker]?.current_price
+  const prevClose = marketData[group.ticker]?.prev_close
+  
+  // 使用誤差範圍處理浮點數比較，判斷是否為平盤
+  const isFlat = hasPriceData && Math.abs(currentPrice - prevClose) < 0.0001
+  const isPriceUp = hasPriceData && !isFlat && currentPrice > prevClose
+  const isPriceDown = hasPriceData && !isFlat && currentPrice < prevClose
   
   const getPriceColor = () => {
     if (!hasPriceData) return 'black'
@@ -110,8 +115,12 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
         <Td isNumeric>
           {hasPriceData ? (
             <HStack justify="flex-end" spacing={1} color={isPriceUp ? 'red.500' : isPriceDown ? 'green.500' : 'black'}>
-              <Text fontWeight="bold">{Math.abs(group.change).toFixed(2)}</Text>
-              <Text fontSize="xs">({isPriceUp ? '+' : isPriceDown ? '-' : ''}{Math.abs(group.changePercent).toFixed(2)}%)</Text>
+              <Text fontWeight="bold">
+                {isFlat ? '' : (isPriceUp ? '' : '')}{Math.abs(group.change).toFixed(2)}
+              </Text>
+              <Text fontSize="xs">
+                ({isPriceUp ? '+' : (isPriceDown ? '-' : '')}{Math.abs(group.changePercent).toFixed(2)}%)
+              </Text>
             </HStack>
           ) : '-'}
         </Td>
