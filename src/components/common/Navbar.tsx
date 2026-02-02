@@ -49,10 +49,10 @@ export const Navbar = ({ userEmail, role, currentPage, onNavigate }: NavbarProps
         <Flex h={24} alignItems={'center'} justifyContent={'space-between'}>
           <HStack spacing={10}>
             <VStack align="start" spacing={0} cursor="pointer" onClick={() => onNavigate('dashboard')}>
-              <Text 
-                fontWeight="900" 
-                fontSize="2xl" 
-                bgGradient="linear(to-r, brand.500, brand.900)" 
+              <Text
+                fontWeight="900"
+                fontSize="2xl"
+                bgGradient="linear(to-r, brand.500, brand.900)"
                 bgClip="text"
                 letterSpacing="tighter"
                 lineHeight="shorter"
@@ -63,34 +63,34 @@ export const Navbar = ({ userEmail, role, currentPage, onNavigate }: NavbarProps
                 台美股票持股追蹤器
               </Text>
             </VStack>
-            
+
             <HStack spacing={6} display={{ base: 'none', md: 'flex' }}>
               {navItems.map((item) => {
                 const isActive = currentPage === item.value
                 return (
-                  <Text 
+                  <Box
                     key={item.value}
-                    fontWeight="bold" 
-                    fontSize="sm" 
-                    color={isActive ? 'brand.500' : 'ui.navy'} 
-                    cursor="pointer" 
+                    fontWeight="bold"
+                    fontSize="sm"
+                    color={isActive ? 'brand.500' : 'ui.navy'}
+                    cursor="pointer"
                     position="relative"
                     _hover={{ color: 'brand.500' }}
                     onClick={() => onNavigate(item.value)}
                   >
                     {item.label}
                     {isActive && (
-                      <Box 
-                        position="absolute" 
-                        bottom="-4px" 
-                        left="0" 
-                        right="0" 
-                        h="2px" 
-                        bg="brand.500" 
+                      <Box
+                        position="absolute"
+                        bottom="-4px"
+                        left="0"
+                        right="0"
+                        h="2px"
+                        bg="brand.500"
                         rounded="full"
                       />
                     )}
-                  </Text>
+                  </Box>
                 )
               })}
             </HStack>

@@ -6,6 +6,7 @@ import {
   Container,
   Button,
   Flex,
+  HStack,
   useDisclosure,
   SimpleGrid,
   Stat,
@@ -21,7 +22,6 @@ import {
   TabPanel,
   useToast,
   Skeleton,
-  Text,
 } from '@chakra-ui/react'
 import { RepeatIcon, AddIcon } from '@chakra-ui/icons'
 import { supabase } from './services/supabase'
@@ -212,9 +212,9 @@ function App() {
       default:
         return (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }}>
-            <MotionGrid 
-              columns={{ base: 1, md: 4 }} 
-              spacing={6} 
+            <MotionGrid
+              columns={{ base: 1, md: 4 }}
+              spacing={6}
               mb={10}
               initial={{ y: 20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
@@ -261,11 +261,11 @@ function App() {
                     <Tab fontWeight="bold" _selected={{ bg: 'white', shadow: 'md' }}>我的持股</Tab>
                     <Tab fontWeight="bold" _selected={{ bg: 'white', shadow: 'md' }}>歷史成交</Tab>
                   </TabList>
-                  
+
                   <HStack spacing={3}>
-                    <Button 
-                      leftIcon={<RepeatIcon />} 
-                      variant="ghost" 
+                    <Button
+                      leftIcon={<RepeatIcon />}
+                      variant="ghost"
                       size="sm"
                       onClick={handleManualRefresh}
                       isLoading={refreshing}
@@ -273,9 +273,9 @@ function App() {
                     >
                       更新
                     </Button>
-                    <Button 
-                      leftIcon={<AddIcon />} 
-                      colorScheme="blue" 
+                    <Button
+                      leftIcon={<AddIcon />}
+                      colorScheme="blue"
                       size="sm"
                       onClick={onOpen}
                       rounded="xl"
@@ -290,11 +290,11 @@ function App() {
 
                 <TabPanels>
                   <TabPanel p={0}>
-                    <HoldingsTable 
-                      holdings={holdings} 
-                      marketData={marketData} 
+                    <HoldingsTable
+                      holdings={holdings}
+                      marketData={marketData}
                       isLoading={isDataLoading}
-                      onDataChange={() => { fetchHoldings(); fetchHistory(); }} 
+                      onDataChange={() => { fetchHoldings(); fetchHistory(); }}
                     />
                   </TabPanel>
                   <TabPanel p={0}>
@@ -313,16 +313,16 @@ function App() {
                 fetchMarketData()
               }}
             />
-          </>
+          </motion.div>
         )
     }
   }
 
   return (
     <Box minH="100vh" bg="ui.bg">
-      <Navbar 
-        userEmail={session.user.email} 
-        role={profile?.role} 
+      <Navbar
+        userEmail={session.user.email}
+        role={profile?.role}
         currentPage={currentPage}
         onNavigate={(page) => setCurrentPage(page)}
       />
