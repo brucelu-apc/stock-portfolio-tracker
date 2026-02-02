@@ -66,7 +66,7 @@ def get_report_data():
     return {
         "month": datetime.now().strftime("%B %Y"),
         "total_value": f"{total_value:,.0f}",
-        "pnl": f"{pnl:+,0f}",
+        "pnl": f"{pnl:+,.0f}",
         "roi": f"{roi:+.2f}%",
         "top_holdings": top_holdings,
         "is_profit": pnl >= 0
