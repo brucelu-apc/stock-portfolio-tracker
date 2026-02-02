@@ -53,6 +53,10 @@ def update_market_data():
             tickers_str = " ".join(ticker_map.keys())
             data = yf.download(tickers_str, period="1d", group_by='ticker', progress=False)
 
+            # Get current market_data to check for missing sectors
+            market_data_res = supabase.table("market_data").select("ticker, sector").execute()
+            existing_sectors = {item['ticker']: item['sector'] for item in market_data_res.data}
+
             for yf_code, original_ticker in ticker_map.items():
                 try:
                     # Handle single ticker vs multiple tickers return format
@@ -62,14 +66,23 @@ def update_market_data():
                         current_price = ticker_data['Close'].iloc[-1]
                         prev_close = ticker_data['Open'].iloc[-1]
 
+                        # Fetch sector if missing or Unknown
+                        sector = existing_sectors.get(original_ticker, "Unknown")
+                        if sector == "Unknown":
+                            print(f"Fetching sector for {original_ticker}...")
+                            info = yf.Ticker(yf_code).info
+                            sector = info.get('sector', "Unknown")
+                            print(f"Sector for {original_ticker}: {sector}")
+
                         supabase.table("market_data").upsert({
                             "ticker": original_ticker,
                             "region": "US" if "." not in yf_code else "TPE",
                             "current_price": current_price,
                             "prev_close": prev_close,
+                            "sector": sector,
                             "updated_at": datetime.now().isoformat()
                         }).execute()
-                        print(f"Updated {original_ticker}: {current_price}")
+                        print(f"Updated {original_ticker}: {current_price} ({sector})")
                 except Exception as e:
                     print(f"Failed to update {original_ticker}: {e}")
 

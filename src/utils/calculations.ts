@@ -19,6 +19,7 @@ export interface AggregatedHolding {
   ticker: string
   name: string
   region: string
+  sector: string // Added sector
   totalShares: number
   avgCost: number
   totalCost: number
@@ -60,6 +61,7 @@ export const aggregateHoldings = (holdings: Holding[], marketData: { [ticker: st
     const mData = marketData[ticker] || {}
     const currentPrice = mData.current_price || avgCost
     const prevClose = mData.prev_close || currentPrice
+    const sector = mData.sector || "Unknown" // Get sector
     
     const change = currentPrice - prevClose
     const changePercent = prevClose !== 0 ? (change / prevClose) * 100 : 0
@@ -76,6 +78,7 @@ export const aggregateHoldings = (holdings: Holding[], marketData: { [ticker: st
       ticker,
       name: latest.name,
       region: latest.region,
+      sector,
       totalShares,
       avgCost,
       totalCost: totalCostTWD,
