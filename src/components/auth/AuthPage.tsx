@@ -14,6 +14,7 @@ import {
   CardBody,
   Divider,
   Container,
+  Flex,
 } from '@chakra-ui/react'
 import { supabase } from '../../services/supabase'
 import { motion } from 'framer-motion'

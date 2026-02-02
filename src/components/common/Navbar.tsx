@@ -12,6 +12,7 @@ import {
   MenuList,
   MenuItem,
   MenuDivider,
+  VStack,
 } from '@chakra-ui/react'
 import { supabase } from '../../services/supabase'
 

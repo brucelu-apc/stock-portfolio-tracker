@@ -313,7 +313,7 @@ function App() {
                 fetchMarketData()
               }}
             />
-          </motion.div>
+          </>
         )
     }
   }
