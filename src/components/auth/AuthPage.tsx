@@ -31,7 +31,7 @@ export const AuthPage = () => {
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
-    
+
     try {
       if (isSignUp) {
         const { error } = await supabase.auth.signUp({ email, password })
@@ -85,7 +85,7 @@ export const AuthPage = () => {
       })
       return
     }
-    
+
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: `${window.location.origin}/reset-password`,
@@ -106,11 +106,11 @@ export const AuthPage = () => {
   }
 
   return (
-    <Box 
-      minH="100vh" 
-      display="flex" 
-      alignItems="center" 
-      justifyContent="center" 
+    <Box
+      minH="100vh"
+      display="flex"
+      alignItems="center"
+      justifyContent="center"
       bg="ui.bg"
       bgGradient="radial(circle at 20% 20%, brand.50, transparent), radial(circle at 80% 80%, brand.100, transparent)"
     >
@@ -132,18 +132,18 @@ export const AuthPage = () => {
               <CardBody>
                 <VStack spacing={6}>
                   <Heading size="md" color="ui.navy">{isSignUp ? '建立您的帳號' : '歡迎回來'}</Heading>
-                  
-                  <Button 
+
+                  <Button
                     leftIcon={
                       <svg width="18" height="18" viewBox="0 0 18 18">
-                        <path fill="#4285F4" d="M17.64 9.2c0-.63-.06-1.25-.16-1.84H9v3.47h4.84c-.21 1.12-.84 2.07-1.8 2.7l2.91 2.26c1.7-1.57 2.69-3.89 2.69-6.59z"/>
-                        <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.91-2.26c-.8.54-1.83.86-3.05.86-2.34 0-4.33-1.58-5.04-3.71H.95v2.3C2.43 15.89 5.5 18 9 18z"/>
-                        <path fill="#FBBC05" d="M3.96 10.71c-.18-.54-.28-1.12-.28-1.71s.1-1.17.28-1.71V4.99H.95C.35 6.19 0 7.56 0 9s.35 2.81.95 4.01l3.01-2.3z"/>
-                        <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.47.89 11.43 0 9 0 5.5 0 2.43 2.11.95 4.99L3.96 7.28c.71-2.13 2.7-3.7 5.04-3.7z"/>
+                        <path fill="#4285F4" d="M17.64 9.2c0-.63-.06-1.25-.16-1.84H9v3.47h4.84c-.21 1.12-.84 2.07-1.8 2.7l2.91 2.26c1.7-1.57 2.69-3.89 2.69-6.59z" />
+                        <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.91-2.26c-.8.54-1.83.86-3.05.86-2.34 0-4.33-1.58-5.04-3.71H.95v2.3C2.43 15.89 5.5 18 9 18z" />
+                        <path fill="#FBBC05" d="M3.96 10.71c-.18-.54-.28-1.12-.28-1.71s.1-1.17.28-1.71V4.99H.95C.35 6.19 0 7.56 0 9s.35 2.81.95 4.01l3.01-2.3z" />
+                        <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58C13.47.89 11.43 0 9 0 5.5 0 2.43 2.11.95 4.99L3.96 7.28c.71-2.13 2.7-3.7 5.04-3.7z" />
                       </svg>
-                    } 
-                    w="full" 
-                    variant="outline" 
+                    }
+                    w="full"
+                    variant="outline"
                     h="12"
                     rounded="xl"
                     onClick={handleGoogleLogin}
@@ -158,19 +158,19 @@ export const AuthPage = () => {
                     <Divider />
                   </Box>
 
-                  <form style={{ width: '100%' }} onSubmit={handleAuth}>
+                  <Box as="form" w="full" onSubmit={handleAuth}>
                     <VStack spacing={4}>
                       <FormControl isRequired>
                         <FormLabel fontSize="sm" fontWeight="bold" color="ui.slate">電子郵件</FormLabel>
-                        <Input 
+                        <Input
                           h="12"
                           rounded="xl"
                           bg="gray.50"
                           border="none"
                           _focus={{ bg: 'white', boxShadow: '0 0 0 2px #0ea5e9' }}
-                          type="email" 
-                          value={email} 
-                          onChange={(e) => setEmail(e.target.value)} 
+                          type="email"
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
                           placeholder="your@email.com"
                         />
                       </FormControl>
@@ -183,22 +183,22 @@ export const AuthPage = () => {
                             </Link>
                           )}
                         </Flex>
-                        <Input 
+                        <Input
                           h="12"
                           rounded="xl"
                           bg="gray.50"
                           border="none"
                           _focus={{ bg: 'white', boxShadow: '0 0 0 2px #0ea5e9' }}
-                          type="password" 
-                          value={password} 
-                          onChange={(e) => setPassword(e.target.value)} 
+                          type="password"
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
                           placeholder="********"
                         />
                       </FormControl>
-                      <Button 
-                        type="submit" 
-                        colorScheme="blue" 
-                        w="full" 
+                      <Button
+                        type="submit"
+                        colorScheme="blue"
+                        w="full"
                         h="12"
                         rounded="xl"
                         isLoading={loading}
@@ -209,7 +209,7 @@ export const AuthPage = () => {
                         {isSignUp ? '註冊' : '登入'}
                       </Button>
                     </VStack>
-                  </form>
+                  </Box>
                   <Text fontSize="sm" color="ui.slate">
                     {isSignUp ? '已經有帳號了？' : '還沒有帳號嗎？'}{' '}
                     <Link color="brand.500" fontWeight="bold" onClick={() => setIsSignUp(!isSignUp)}>
