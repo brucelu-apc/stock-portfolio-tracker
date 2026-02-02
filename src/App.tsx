@@ -141,16 +141,45 @@ function App() {
 
   const handleManualRefresh = async () => {
     setRefreshing(true)
+    
+    try {
+      const ghToken = import.meta.env.VITE_GITHUB_TOKEN
+      const ghOwner = import.meta.env.VITE_GITHUB_OWNER
+      const ghRepo = import.meta.env.VITE_GITHUB_REPO
+
+      if (ghToken && ghOwner && ghRepo) {
+        // Trigger GitHub Action via workflow_dispatch
+        const response = await fetch(
+          `https://api.github.com/repos/${ghOwner}/${ghRepo}/actions/workflows/market-update.yml/dispatches`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${ghToken}`,
+              'Accept': 'application/vnd.github+json',
+            },
+            body: JSON.stringify({ ref: 'master' }),
+          }
+        )
+
+        if (response.ok) {
+          toast({
+            title: '更新指令已發送',
+            description: 'GitHub Actions 正在背景抓取最新數據，請稍候 1-2 分鐘再重新整理。',
+            status: 'info',
+            duration: 5000,
+          })
+        } else {
+          console.error('GitHub API error:', await response.text())
+        }
+      }
+    } catch (err) {
+      console.error('Failed to trigger update:', err)
+    }
+
     await fetchMarketData()
     await fetchHoldings()
     await fetchHistory()
     setRefreshing(false)
-    toast({
-      title: '數據已更新',
-      description: '已從伺服器獲取最新市場資訊。',
-      status: 'success',
-      duration: 3000,
-    })
   }
 
   const summary = useMemo(() => {
