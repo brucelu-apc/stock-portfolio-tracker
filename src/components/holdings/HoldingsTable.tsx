@@ -47,6 +47,8 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
   const latestItem = group.items[0]
 
   // Logic 1: Weighted Avg Price Color
+  // 紅色：加權均價 > 最新股價 (套牢)
+  // 綠色：加權均價 < 最新股價 (獲利/有優勢)
   const getAvgCostColor = () => {
     if (!marketData[group.ticker]?.current_price) return 'black'
     if (group.avgCost > group.currentPrice) return 'red.500'
@@ -56,11 +58,20 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
 
   // Logic 2: Current Price Color & Placeholder
   const hasPriceData = !!marketData[group.ticker]?.current_price
+  const isPriceUp = hasPriceData && (marketData[group.ticker].current_price > marketData[group.ticker].prev_close)
+  const isPriceDown = hasPriceData && (marketData[group.ticker].current_price < marketData[group.ticker].prev_close)
+  
   const getPriceColor = () => {
     if (!hasPriceData) return 'black'
-    if (group.change > 0) return 'red.500'
-    if (group.change < 0) return 'green.500'
+    if (isPriceUp) return 'red.500'
+    if (isPriceDown) return 'green.500'
     return 'black'
+  }
+
+  const getChangeSymbol = () => {
+    if (isPriceUp) return <TriangleUpIcon mr={1} />
+    if (isPriceDown) return <TriangleDownIcon mr={1} />
+    return null
   }
 
   return (
@@ -89,14 +100,18 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
         
         {/* Latest Price Column */}
         <Td isNumeric fontWeight="bold" color={getPriceColor()}>
-          {hasPriceData ? `${group.region === 'US' ? '$' : ''}${group.currentPrice.toFixed(2)}` : '-'}
+          <HStack justify="flex-end" spacing={0}>
+            {hasPriceData && getChangeSymbol()}
+            <Text>
+              {hasPriceData ? `${group.region === 'US' ? '$' : ''}${group.currentPrice.toFixed(2)}` : '-'}
+            </Text>
+          </HStack>
         </Td>
         <Td isNumeric>
           {hasPriceData ? (
-            <HStack justify="flex-end" spacing={1} color={isUp ? 'red.500' : 'green.500'}>
-              {group.change !== 0 && (isUp ? <TriangleUpIcon /> : <TriangleDownIcon />)}
+            <HStack justify="flex-end" spacing={1} color={isPriceUp ? 'red.500' : isPriceDown ? 'green.500' : 'black'}>
               <Text fontWeight="bold">{Math.abs(group.change).toFixed(2)}</Text>
-              <Text fontSize="xs">({isUp ? '+' : '-'}{Math.abs(group.changePercent).toFixed(2)}%)</Text>
+              <Text fontSize="xs">({isPriceUp ? '+' : isPriceDown ? '-' : ''}{Math.abs(group.changePercent).toFixed(2)}%)</Text>
             </HStack>
           ) : '-'}
         </Td>
