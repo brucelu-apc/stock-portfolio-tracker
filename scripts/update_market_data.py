@@ -18,7 +18,8 @@ def update_market_data():
     key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
     if not url or not key:
         print("Error: Missing Supabase credentials.")
-        return
+        import sys
+        sys.exit(1)
 
     supabase: Client = create_client(url, key)
 
