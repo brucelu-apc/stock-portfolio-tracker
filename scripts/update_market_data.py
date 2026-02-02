@@ -52,21 +52,40 @@ def update_market_data():
     if not holdings:
         print("No active holdings.")
     else:
-        ticker_map = { (f"{h['ticker']}.TW" if h['region'] == 'TPE' else h['ticker']): h['ticker'] for h in holdings }
+        # Ticker map stores both possible suffixes for Taiwan stocks
+        ticker_map = {}
+        for h in holdings:
+            ticker = h['ticker']
+            if h['region'] == 'TPE':
+                ticker_map[f"{ticker}.TW"] = ticker
+            else:
+                ticker_map[ticker] = ticker
 
         # 4. Batch fetch prices
         print(f"Updating {len(ticker_map)} tickers...")
         if ticker_map:
             tickers_list = list(ticker_map.keys())
-            data = yf.download(tickers_list, period="1d", group_by='ticker', progress=False)
+            # For Taiwan stocks, add .TWO variant just in case
+            tw_variants = [t.replace(".TW", ".TWO") for t in tickers_list if t.endswith(".TW")]
+            all_query_tickers = list(set(tickers_list + tw_variants))
+            
+            data = yf.download(all_query_tickers, period="1d", group_by='ticker', progress=False)
 
             market_data_res = supabase.table("market_data").select("ticker, sector").execute()
             existing_sectors = {item['ticker']: item['sector'] for item in market_data_res.data}
 
-            for yf_code, original_ticker in ticker_map.items():
+            for query_ticker, original_ticker in ticker_map.items():
                 try:
-                    ticker_data = data[yf_code] if len(ticker_map) > 1 else data
-                    if not ticker_data.empty:
+                    # Try primary suffix (.TW)
+                    ticker_data = data[query_ticker] if len(all_query_tickers) > 1 else data
+                    
+                    # If NaN or empty, try alternative suffix (.TWO) for Taiwan stocks
+                    if (ticker_data is None or ticker_data.empty or math.isnan(ticker_data['Close'].iloc[-1])) and query_ticker.endswith(".TW"):
+                        alt_ticker = query_ticker.replace(".TW", ".TWO")
+                        print(f"Primary ticker {query_ticker} failed, trying {alt_ticker}...")
+                        ticker_data = data[alt_ticker] if len(all_query_tickers) > 1 else data
+
+                    if ticker_data is not None and not ticker_data.empty:
                         close_price = ticker_data['Close'].iloc[-1]
                         open_price = ticker_data['Open'].iloc[-1]
 
@@ -76,21 +95,22 @@ def update_market_data():
 
                         sector = existing_sectors.get(original_ticker, "Unknown")
                         if sector == "Unknown":
-                            sector = yf.Ticker(yf_code).info.get('sector', "Unknown")
+                            # Use yf.Ticker for sector as download() doesn't provide info
+                            sector = yf.Ticker(query_ticker).info.get('sector', "Unknown")
 
                         supabase.table("market_data").upsert({
                             "ticker": original_ticker,
-                            "region": "US" if "." not in yf_code else "TPE",
+                            "region": "US" if "." not in query_ticker else "TPE",
                             "current_price": close_price,
                             "prev_close": open_price if is_valid_number(open_price) else close_price,
                             "sector": sector,
                             "updated_at": datetime.now().isoformat()
                         }).execute()
-                        print(f"Updated {original_ticker}: {close_price}")
+                        print(f"Updated {original_ticker}: {close_price} ({sector})")
                 except Exception as e:
                     print(f"Error updating {original_ticker}: {e}")
 
-    # 5. Alerts Logic (Same as before but with valid number checks)
+    # 5. Alerts Logic
     print("Checking alerts...")
     all_holdings = supabase.table("portfolio_holdings").select("*").execute()
     alerts = []
