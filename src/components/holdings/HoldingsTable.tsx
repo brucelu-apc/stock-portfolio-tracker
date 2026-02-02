@@ -42,8 +42,9 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
   const { isOpen, onToggle } = useDisclosure()
   const { tp, sl } = calculateTPSL(group)
 
-  const isProfit = group.unrealizedPnl >= 0
-  const isUp = group.change >= 0
+  const isProfit = group.unrealizedPnl > 0.001
+  const isLoss = group.unrealizedPnl < -0.001
+  const isPnlFlat = !isProfit && !isLoss
   const latestItem = group.items[0]
 
   // Logic 1: Weighted Avg Price Color
@@ -73,7 +74,7 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
     return 'black'
   }
 
-  const getChangeSymbol = () => {
+  const getPriceSymbol = () => {
     if (isPriceUp) return <TriangleUpIcon mr={1} />
     if (isPriceDown) return <TriangleDownIcon mr={1} />
     return null
@@ -106,7 +107,7 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
         {/* Latest Price Column */}
         <Td isNumeric fontWeight="bold" color={getPriceColor()}>
           <HStack justify="flex-end" spacing={0}>
-            {hasPriceData && getChangeSymbol()}
+            {hasPriceData && getPriceSymbol()}
             <Text>
               {hasPriceData ? `${group.region === 'US' ? '$' : ''}${group.currentPrice.toFixed(2)}` : '-'}
             </Text>
@@ -115,8 +116,11 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
         <Td isNumeric>
           {hasPriceData ? (
             <HStack justify="flex-end" spacing={1} color={isPriceUp ? 'red.500' : isPriceDown ? 'green.500' : 'black'}>
+              {/* 漲跌數值前的符號：上漲用正三角，下跌用倒三角，平盤不顯示 */}
+              {isPriceUp && <TriangleUpIcon />}
+              {isPriceDown && <TriangleDownIcon />}
               <Text fontWeight="bold">
-                {isFlat ? '' : (isPriceUp ? '' : '')}{Math.abs(group.change).toFixed(2)}
+                {Math.abs(group.change).toFixed(2)}
               </Text>
               <Text fontSize="xs">
                 ({isPriceUp ? '+' : (isPriceDown ? '-' : '')}{Math.abs(group.changePercent).toFixed(2)}%)
@@ -130,10 +134,10 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
         </Td>
         <Td isNumeric>
           <VStack align="end" spacing={0}>
-            <Text color={isProfit ? 'red.500' : 'green.500'} fontWeight="bold">
+            <Text color={isProfit ? 'red.500' : isLoss ? 'green.500' : 'black'} fontWeight="bold">
               {isProfit ? '+' : ''}{group.unrealizedPnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}
             </Text>
-            <Text fontSize="xs" color={isProfit ? 'red.500' : 'green.500'}>
+            <Text fontSize="xs" color={isProfit ? 'red.500' : isLoss ? 'green.500' : 'black'}>
               {isProfit ? '+' : ''}{group.roi.toFixed(2)}%
             </Text>
           </VStack>
