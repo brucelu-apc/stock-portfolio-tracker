@@ -69,6 +69,8 @@ def update_market_data():
             tw_variants = [t.replace(".TW", ".TWO") for t in tickers_list if t.endswith(".TW")]
             all_query_tickers = list(set(tickers_list + tw_variants))
             
+            # Use yf.download(..., interval="1m") to get the most recent price if needed, 
+            # but usually period="1d" is fine. The key is how yfinance handles the "Open" vs "Prev Close".
             data = yf.download(all_query_tickers, period="1d", group_by='ticker', progress=False)
 
             market_data_res = supabase.table("market_data").select("ticker, sector").execute()
@@ -84,10 +86,24 @@ def update_market_data():
                         alt_ticker = query_ticker.replace(".TW", ".TWO")
                         print(f"Primary ticker {query_ticker} failed, trying {alt_ticker}...")
                         ticker_data = data[alt_ticker] if len(all_query_tickers) > 1 else data
+                        query_ticker = alt_ticker # Use the successful ticker for info fetch
 
                     if ticker_data is not None and not ticker_data.empty:
+                        # yfinance's 'Close' for current day is the live price
+                        # 'Open' is today's open. To get "漲跌幅", we actually need the PREVIOUS CLOSE.
+                        # yfinance download period="1d" often doesn't give previous close easily.
+                        # Let's try to get full info from Ticker object for critical fields.
+                        
                         close_price = ticker_data['Close'].iloc[-1]
-                        open_price = ticker_data['Open'].iloc[-1]
+                        
+                        # Fetch Ticker object for more detailed info (like previousClose)
+                        ticker_obj = yf.Ticker(query_ticker)
+                        info = ticker_obj.info
+                        prev_close = info.get('previousClose')
+                        
+                        if not is_valid_number(prev_close):
+                            # Fallback to Open if previousClose is missing
+                            prev_close = ticker_data['Open'].iloc[-1]
 
                         if not is_valid_number(close_price):
                             print(f"Skipping {original_ticker}: Invalid price data (NaN)")
@@ -95,18 +111,17 @@ def update_market_data():
 
                         sector = existing_sectors.get(original_ticker, "Unknown")
                         if sector == "Unknown":
-                            # Use yf.Ticker for sector as download() doesn't provide info
-                            sector = yf.Ticker(query_ticker).info.get('sector', "Unknown")
+                            sector = info.get('sector', "Unknown")
 
                         supabase.table("market_data").upsert({
                             "ticker": original_ticker,
                             "region": "US" if "." not in query_ticker else "TPE",
                             "current_price": close_price,
-                            "prev_close": open_price if is_valid_number(open_price) else close_price,
+                            "prev_close": prev_close if is_valid_number(prev_close) else close_price,
                             "sector": sector,
                             "updated_at": datetime.now().isoformat()
                         }).execute()
-                        print(f"Updated {original_ticker}: {close_price} ({sector})")
+                        print(f"Updated {original_ticker}: {close_price} (Prev: {prev_close}, Sector: {sector})")
                 except Exception as e:
                     print(f"Error updating {original_ticker}: {e}")
 
