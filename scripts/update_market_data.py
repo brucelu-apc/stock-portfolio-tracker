@@ -1,8 +1,18 @@
+#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "yfinance>=0.2.40",
+#     "supabase>=2.3.0",
+#     "requests>=2.31.0",
+# ]
+# ///
 import os
 import requests
 import yfinance as yf
 from supabase import create_client, Client
 from datetime import datetime
+import time
 
 def update_market_data():
     # 1. Setup Supabase Client
@@ -16,20 +26,24 @@ def update_market_data():
 
     # 2. Update Exchange Rate (USDTWD)
     print("Fetching exchange rate...")
-    twd_fx = yf.Ticker("TWD=X")
-    fx_data = twd_fx.history(period="1d")
-    if not fx_data.empty:
-        current_fx = fx_data['Close'].iloc[-1]
-        prev_fx = fx_data['Open'].iloc[-1]
-        
-        supabase.table("market_data").upsert({
-            "ticker": "USDTWD",
-            "region": "FX",
-            "current_price": current_fx,
-            "prev_close": prev_fx,
-            "updated_at": datetime.now().isoformat()
-        }).execute()
-        print(f"Updated USDTWD: {current_fx}")
+    try:
+        twd_fx = yf.Ticker("TWD=X")
+        fx_data = twd_fx.history(period="1d")
+        if not fx_data.empty:
+            current_fx = fx_data['Close'].iloc[-1]
+            prev_fx = fx_data['Open'].iloc[-1]
+            
+            supabase.table("market_data").upsert({
+                "ticker": "USDTWD",
+                "region": "FX",
+                "current_price": current_fx,
+                "prev_close": prev_fx,
+                "updated_at": datetime.now().isoformat(),
+                "sector": "Forex"
+            }).execute()
+            print(f"Updated USDTWD: {current_fx}")
+    except Exception as e:
+        print(f"Failed to update exchange rate: {e}")
 
     # 3. Get all active tickers from holdings
     print("Fetching active tickers...")
@@ -50,8 +64,9 @@ def update_market_data():
         # 4. Batch fetch stock prices
         print(f"Updating prices for {len(ticker_map)} tickers...")
         if ticker_map:
-            tickers_str = " ".join(ticker_map.keys())
-            data = yf.download(tickers_str, period="1d", group_by='ticker', progress=False)
+            tickers_list = list(ticker_map.keys())
+            # Use Tickers object for better bulk handling
+            data = yf.download(tickers_list, period="1d", group_by='ticker', progress=False)
 
             # Get current market_data to check for missing sectors
             market_data_res = supabase.table("market_data").select("ticker, sector").execute()
@@ -68,10 +83,21 @@ def update_market_data():
 
                         # Fetch sector if missing or Unknown
                         sector = existing_sectors.get(original_ticker, "Unknown")
-                        if sector == "Unknown":
-                            print(f"Fetching sector for {original_ticker}...")
-                            info = yf.Ticker(yf_code).info
-                            sector = info.get('sector', "Unknown")
+                        if sector == "Unknown" or sector is None:
+                            print(f"Fetching sector for {original_ticker} ({yf_code})...")
+                            ticker_obj = yf.Ticker(yf_code)
+                            # yfinance .info can be unreliable/slow, try to get sector
+                            try:
+                                sector = ticker_obj.info.get('sector', "Unknown")
+                            except:
+                                sector = "Unknown"
+                            
+                            # Fallback for common TPE tickers if info fails
+                            if sector == "Unknown" and ".TW" in yf_code:
+                                if yf_code.startswith("2330"): sector = "Technology"
+                                elif yf_code.startswith("2317"): sector = "Technology"
+                                elif yf_code.startswith("2454"): sector = "Technology"
+                            
                             print(f"Sector for {original_ticker}: {sector}")
 
                         supabase.table("market_data").upsert({
@@ -104,7 +130,7 @@ def update_market_data():
             avg_cost = float(holding['cost_price'])
             old_hwm = float(holding['high_watermark_price'] or avg_cost)
             
-            # Update High Watermark (for UI/Analysis, still useful)
+            # Update High Watermark
             if current_price > old_hwm:
                 supabase.table("portfolio_holdings").update({
                     "high_watermark_price": current_price
@@ -112,7 +138,6 @@ def update_market_data():
                 print(f"New High Watermark for {ticker}: {current_price}")
 
             # NEW Stop Loss Alert Logic: within +/- 2% of cost price
-            # Range: [Cost * 0.98, Cost * 1.02]
             lower_bound = avg_cost * 0.98
             upper_bound = avg_cost * 1.02
             
@@ -138,10 +163,9 @@ def send_alerts_to_openclaw(alerts):
     target_user = os.environ.get("NOTIFICATION_TARGET_ID")
 
     if not gateway_url or not gateway_token or not target_user:
-        print("Warning: Missing OpenClaw notification settings (URL, Token, or Target ID).")
+        print("Warning: Missing OpenClaw notification settings.")
         return
 
-    # Clean URL (ensure no trailing slash for endpoint construction)
     base_url = gateway_url.rstrip("/")
     endpoint = f"{base_url}/api/v1/message"
     headers = {
