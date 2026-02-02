@@ -4,6 +4,7 @@ import yfinance as yf
 from supabase import create_client, Client
 from datetime import datetime
 import math
+import time
 
 def is_valid_number(n):
     try:
@@ -11,6 +12,28 @@ def is_valid_number(n):
         return not (math.isnan(num) or math.isinf(num))
     except (TypeError, ValueError):
         return False
+
+def get_latest_price_from_df(df):
+    """Extract the latest non-NaN price and its corresponding open/prev_close from a yfinance history dataframe."""
+    if df is None or df.empty:
+        return None, None
+    
+    # Remove rows where Close is NaN
+    valid_rows = df.dropna(subset=['Close'])
+    if valid_rows.empty:
+        return None, None
+    
+    latest_row = valid_rows.iloc[-1]
+    close_price = latest_row['Close']
+    
+    # For previous close, we ideally want the row before the latest one if it exists
+    if len(valid_rows) > 1:
+        prev_close = valid_rows.iloc[-2]['Close']
+    else:
+        # Fallback to Open of the same day if only one row exists
+        prev_close = latest_row['Open']
+        
+    return close_price, prev_close
 
 def update_market_data():
     # 1. Setup Supabase Client
@@ -24,24 +47,25 @@ def update_market_data():
     supabase: Client = create_client(url, key)
 
     # 2. Update Exchange Rate (USDTWD)
-    print("Fetching exchange rate...")
+    print("Fetching exchange rate (USDTWD)...")
     try:
         twd_fx = yf.Ticker("TWD=X")
-        fx_data = twd_fx.history(period="1d")
-        if not fx_data.empty:
-            current_fx = fx_data['Close'].iloc[-1]
-            prev_fx = fx_data['Open'].iloc[-1]
-            
-            if is_valid_number(current_fx):
-                supabase.table("market_data").upsert({
-                    "ticker": "USDTWD",
-                    "region": "FX",
-                    "current_price": current_fx,
-                    "prev_close": prev_fx if is_valid_number(prev_fx) else current_fx,
-                    "updated_at": datetime.now().isoformat(),
-                    "sector": "Forex"
-                }).execute()
-                print(f"Updated USDTWD: {current_fx}")
+        # Use period="5d" to ensure we get data even on weekends/holidays
+        fx_data = twd_fx.history(period="5d")
+        current_fx, prev_fx = get_latest_price_from_df(fx_data)
+        
+        if is_valid_number(current_fx):
+            supabase.table("market_data").upsert({
+                "ticker": "USDTWD",
+                "region": "FX",
+                "current_price": current_fx,
+                "prev_close": prev_fx if is_valid_number(prev_fx) else current_fx,
+                "updated_at": datetime.now().isoformat(),
+                "sector": "Forex"
+            }).execute()
+            print(f"Updated USDTWD: {current_fx} (Prev: {prev_fx})")
+        else:
+            print("Failed to get valid exchange rate data.")
     except Exception as e:
         print(f"Failed to update exchange rate: {e}")
 
@@ -52,7 +76,6 @@ def update_market_data():
     if not holdings:
         print("No active holdings.")
     else:
-        # Ticker map stores both possible suffixes for Taiwan stocks
         ticker_map = {}
         for h in holdings:
             ticker = h['ticker']
@@ -65,53 +88,47 @@ def update_market_data():
         print(f"Updating {len(ticker_map)} tickers...")
         if ticker_map:
             tickers_list = list(ticker_map.keys())
-            # For Taiwan stocks, add .TWO variant just in case
+            # For Taiwan stocks, add .TWO variant
             tw_variants = [t.replace(".TW", ".TWO") for t in tickers_list if t.endswith(".TW")]
             all_query_tickers = list(set(tickers_list + tw_variants))
             
-            # Use yf.download(..., interval="1m") to get the most recent price if needed, 
-            # but usually period="1d" is fine. The key is how yfinance handles the "Open" vs "Prev Close".
-            data = yf.download(all_query_tickers, period="1d", group_by='ticker', progress=False)
+            # Use period="5d" for batch download as well to be more resilient
+            data = yf.download(all_query_tickers, period="5d", group_by='ticker', progress=False)
 
             market_data_res = supabase.table("market_data").select("ticker, sector").execute()
             existing_sectors = {item['ticker']: item['sector'] for item in market_data_res.data}
 
             for query_ticker, original_ticker in ticker_map.items():
                 try:
-                    # Try primary suffix (.TW)
                     ticker_data = data[query_ticker] if len(all_query_tickers) > 1 else data
                     
                     # If NaN or empty, try alternative suffix (.TWO) for Taiwan stocks
-                    if (ticker_data is None or ticker_data.empty or math.isnan(ticker_data['Close'].iloc[-1])) and query_ticker.endswith(".TW"):
+                    if (ticker_data is None or ticker_data.empty or math.isnan(ticker_data['Close'].dropna().iloc[-1] if not ticker_data['Close'].dropna().empty else float('nan'))) and query_ticker.endswith(".TW"):
                         alt_ticker = query_ticker.replace(".TW", ".TWO")
-                        print(f"Primary ticker {query_ticker} failed, trying {alt_ticker}...")
+                        print(f"Primary ticker {query_ticker} failed or empty, trying {alt_ticker}...")
                         ticker_data = data[alt_ticker] if len(all_query_tickers) > 1 else data
-                        query_ticker = alt_ticker # Use the successful ticker for info fetch
+                        # If successful, use this ticker for info/sector fetch
+                        if not ticker_data['Close'].dropna().empty:
+                            query_ticker = alt_ticker
 
-                    if ticker_data is not None and not ticker_data.empty:
-                        # yfinance's 'Close' for current day is the live price
-                        # 'Open' is today's open. To get "漲跌幅", we actually need the PREVIOUS CLOSE.
-                        # yfinance download period="1d" often doesn't give previous close easily.
-                        # Let's try to get full info from Ticker object for critical fields.
-                        
-                        close_price = ticker_data['Close'].iloc[-1]
-                        
-                        # Fetch Ticker object for more detailed info (like previousClose)
-                        ticker_obj = yf.Ticker(query_ticker)
-                        info = ticker_obj.info
-                        prev_close = info.get('previousClose')
-                        
-                        if not is_valid_number(prev_close):
-                            # Fallback to Open if previousClose is missing
-                            prev_close = ticker_data['Open'].iloc[-1]
+                    close_price, prev_close = get_latest_price_from_df(ticker_data)
 
-                        if not is_valid_number(close_price):
-                            print(f"Skipping {original_ticker}: Invalid price data (NaN)")
-                            continue
-
+                    if is_valid_number(close_price):
+                        # Fetch Ticker object for sector if missing
                         sector = existing_sectors.get(original_ticker, "Unknown")
                         if sector == "Unknown":
-                            sector = info.get('sector', "Unknown")
+                            try:
+                                sector = yf.Ticker(query_ticker).info.get('sector', "Unknown")
+                            except:
+                                sector = "Unknown"
+
+                        # If we still don't have a good prev_close from history, try Ticker.info
+                        if not is_valid_number(prev_close):
+                            try:
+                                info = yf.Ticker(query_ticker).info
+                                prev_close = info.get('previousClose', close_price)
+                            except:
+                                prev_close = close_price
 
                         supabase.table("market_data").upsert({
                             "ticker": original_ticker,
@@ -122,6 +139,8 @@ def update_market_data():
                             "updated_at": datetime.now().isoformat()
                         }).execute()
                         print(f"Updated {original_ticker}: {close_price} (Prev: {prev_close}, Sector: {sector})")
+                    else:
+                        print(f"Skipping {original_ticker}: Could not find valid price data in last 5 days.")
                 except Exception as e:
                     print(f"Error updating {original_ticker}: {e}")
 
