@@ -87,13 +87,36 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
 
         const { error } = await supabase
           .from('portfolio_holdings')
-          .insert(validItems)
+          .upsert(validItems, { onConflict: 'user_id,ticker' })
 
         if (error) throw error
 
+        // Trigger market update
+        try {
+          const ghToken = import.meta.env.VITE_GITHUB_TOKEN
+          const ghOwner = import.meta.env.VITE_GITHUB_OWNER
+          const ghRepo = import.meta.env.VITE_GITHUB_REPO
+
+          if (ghToken && ghOwner && ghRepo) {
+            await fetch(
+              `https://api.github.com/repos/${ghOwner}/${ghRepo}/actions/workflows/market-update.yml/dispatches`,
+              {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${ghToken}`,
+                  'Accept': 'application/vnd.github+json',
+                },
+                body: JSON.stringify({ ref: 'master' }),
+              }
+            )
+          }
+        } catch (ghErr) {
+          console.error('Failed to trigger market update:', ghErr)
+        }
+
         toast({
           title: '導入成功',
-          description: `成功導入 ${validItems.length} 筆持股資料。`,
+          description: `成功導入/更新 ${validItems.length} 筆持股資料，並已觸發市價同步。`,
           status: 'success',
           duration: 3000,
         })
