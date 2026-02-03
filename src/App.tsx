@@ -23,7 +23,7 @@ import {
   useToast,
   Skeleton,
 } from '@chakra-ui/react'
-import { RepeatIcon, AddIcon } from '@chakra-ui/icons'
+import { RepeatIcon, AddIcon, DownloadIcon } from '@chakra-ui/icons'
 import { supabase } from './services/supabase'
 import { AuthPage } from './components/auth/AuthPage'
 import { ResetPasswordPage } from './components/auth/ResetPasswordPage'
@@ -182,6 +182,50 @@ function App() {
     setRefreshing(false)
   }
 
+  const handleExportCSV = () => {
+    if (holdings.length === 0) {
+      toast({
+        title: '沒有資料可導出',
+        status: 'warning',
+        duration: 3000,
+      })
+      return
+    }
+
+    // Define CSV headers
+    const headers = ['ticker', 'region', 'name', 'shares', 'cost_price', 'strategy_mode', 'buy_date']
+    
+    // Create rows
+    const rows = holdings.map(h => [
+      h.ticker,
+      h.region,
+      h.name,
+      h.shares,
+      h.cost_price,
+      h.strategy_mode,
+      h.buy_date
+    ].map(val => `"${val}"`).join(','))
+
+    const csvContent = [headers.join(','), ...rows].join('\n')
+    const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    
+    const link = document.createElement('a')
+    link.setAttribute('href', url)
+    link.setAttribute('download', `portfolio_export_${new Date().toISOString().split('T')[0]}.csv`)
+    link.style.visibility = 'hidden'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    
+    toast({
+      title: '導出成功',
+      description: '持股資料已轉為 CSV 檔案下載。',
+      status: 'success',
+      duration: 3000,
+    })
+  }
+
   const summary = useMemo(() => {
     const aggregated = aggregateHoldings(holdings, marketData)
     let totalCost = 0
@@ -292,6 +336,15 @@ function App() {
                   </TabList>
 
                   <HStack spacing={3}>
+                    <Button
+                      leftIcon={<DownloadIcon />}
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleExportCSV}
+                      rounded="xl"
+                    >
+                      導出 CSV
+                    </Button>
                     <Button
                       leftIcon={<RepeatIcon />}
                       variant="ghost"
