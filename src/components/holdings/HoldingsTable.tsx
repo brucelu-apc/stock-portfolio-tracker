@@ -17,8 +17,8 @@ import {
   useToast,
   Skeleton,
 } from '@chakra-ui/react'
-import { EditIcon, DeleteIcon, ChevronDownIcon, ChevronUpIcon, TriangleUpIcon, TriangleDownIcon } from '@chakra-ui/icons'
-import { MouseEvent, useState } from 'react'
+import { EditIcon, DeleteIcon, ChevronDownIcon, ChevronUpIcon, TriangleUpIcon, TriangleDownIcon, UpDownIcon } from '@chakra-ui/icons'
+import { MouseEvent, useState, useMemo } from 'react'
 import { AggregatedHolding, aggregateHoldings, calculateTPSL, Holding } from '../../utils/calculations'
 import { supabase } from '../../services/supabase'
 import { EditHoldingModal } from './EditHoldingModal'
@@ -29,6 +29,14 @@ interface Props {
   marketData: { [ticker: string]: any }
   onDataChange?: () => void
   isLoading?: boolean
+}
+
+type SortField = 'ticker' | 'name' | 'totalShares' | 'avgCost' | 'currentPrice' | 'changePercent' | 'marketValue' | 'unrealizedPnl'
+type SortOrder = 'asc' | 'desc' | null
+
+interface SortConfig {
+  field: SortField
+  order: SortOrder
 }
 
 interface HoldingRowProps {
@@ -196,7 +204,39 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
 }
 
 export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }: Props) => {
-  const aggregatedData = aggregateHoldings(holdings, marketData)
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ field: 'marketValue', order: 'desc' })
+  
+  const aggregatedData = useMemo(() => {
+    const data = aggregateHoldings(holdings, marketData)
+    
+    if (!sortConfig.order) return data
+
+    return [...data].sort((a, b) => {
+      let aVal: any = a[sortConfig.field]
+      let bVal: any = b[sortConfig.field]
+
+      // Handle specific fields if needed
+      if (sortConfig.field === 'ticker') {
+        return sortConfig.order === 'asc' 
+          ? aVal.localeCompare(bVal) 
+          : bVal.localeCompare(aVal)
+      }
+
+      if (sortConfig.field === 'name') {
+        return sortConfig.order === 'asc'
+          ? aVal.localeCompare(bVal, 'zh-Hant')
+          : bVal.localeCompare(aVal, 'zh-Hant')
+      }
+
+      // Default numeric sort
+      if (sortConfig.order === 'asc') {
+        return aVal - bVal
+      } else {
+        return bVal - aVal
+      }
+    })
+  }, [holdings, marketData, sortConfig])
+
   const toast = useToast()
   const [selectedHolding, setSelectedHolding] = useState<Holding | null>(null)
   const { isOpen, onOpen, onClose } = useDisclosure()
@@ -212,20 +252,54 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
     onSellOpen()
   }
 
+  const requestSort = (field: SortField) => {
+    let order: SortOrder = 'desc'
+    if (sortConfig.field === field && sortConfig.order === 'desc') {
+      order = 'asc'
+    } else if (sortConfig.field === field && sortConfig.order === 'asc') {
+      order = null
+    }
+    setSortConfig({ field, order })
+  }
+
+  const SortIndicator = ({ field }: { field: SortField }) => {
+    if (sortConfig.field !== field || !sortConfig.order) {
+      return <UpDownIcon ml={1} color="gray.300" boxSize={3} />
+    }
+    return sortConfig.order === 'asc' 
+      ? <ChevronUpIcon ml={1} color="blue.500" /> 
+      : <ChevronDownIcon ml={1} color="blue.500" />
+  }
+
+  const SortableTh = ({ field, children, isNumeric = false }: { field: SortField, children: React.ReactNode, isNumeric?: boolean }) => (
+    <Th 
+      cursor="pointer" 
+      onClick={() => requestSort(field)}
+      _hover={{ bg: 'gray.100' }}
+      isNumeric={isNumeric}
+      whiteSpace="nowrap"
+    >
+      <HStack spacing={1} justify={isNumeric ? 'flex-end' : 'flex-start'}>
+        <Text>{children}</Text>
+        <SortIndicator field={field} />
+      </HStack>
+    </Th>
+  )
+
   return (
     <>
       <TableContainer bg="white" rounded="lg" shadow="sm" border="1px" borderColor="gray.100">
         <Table variant="simple">
           <Thead bg="gray.50">
             <Tr>
-              <Th>代碼/地區</Th>
-              <Th>名稱</Th>
-              <Th isNumeric>總股數</Th>
-              <Th isNumeric>加權均價</Th>
-              <Th isNumeric>最新股價</Th>
-              <Th isNumeric>漲跌</Th>
-              <Th isNumeric>市值 (TWD)</Th>
-              <Th isNumeric>總損益</Th>
+              <SortableTh field="ticker">代碼/地區</SortableTh>
+              <SortableTh field="name">名稱</SortableTh>
+              <SortableTh field="totalShares" isNumeric>總股數</SortableTh>
+              <SortableTh field="avgCost" isNumeric>加權均價</SortableTh>
+              <SortableTh field="currentPrice" isNumeric>最新股價</SortableTh>
+              <SortableTh field="changePercent" isNumeric>漲跌</SortableTh>
+              <SortableTh field="marketValue" isNumeric>市值 (TWD)</SortableTh>
+              <SortableTh field="unrealizedPnl" isNumeric>總損益</SortableTh>
               <Th isNumeric>停利/損</Th>
               <Th>操作</Th>
             </Tr>
