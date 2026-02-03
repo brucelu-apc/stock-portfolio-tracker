@@ -23,7 +23,7 @@ import {
   useToast,
   Skeleton,
 } from '@chakra-ui/react'
-import { RepeatIcon, AddIcon, DownloadIcon } from '@chakra-ui/icons'
+import { RepeatIcon, AddIcon, DownloadIcon, ExternalLinkIcon } from '@chakra-ui/icons'
 import { supabase } from './services/supabase'
 import { AuthPage } from './components/auth/AuthPage'
 import { ResetPasswordPage } from './components/auth/ResetPasswordPage'
@@ -36,6 +36,7 @@ import { HistoryTable } from './components/holdings/HistoryTable'
 import { HistorySummary } from './components/holdings/HistorySummary'
 import { UserManagement } from './components/admin/UserManagement'
 import { SettingsPage } from './components/settings/SettingsPage'
+import { ImportDataModal } from './components/holdings/ImportDataModal'
 import { Session } from '@supabase/supabase-js'
 import { aggregateHoldings } from './utils/calculations'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -53,6 +54,11 @@ function App() {
   const [refreshing, setRefreshing] = useState(false)
   const [isDataLoading, setIsDataLoading] = useState(true)
   const { isOpen, onOpen, onClose } = useDisclosure()
+  const { 
+    isOpen: isImportOpen, 
+    onOpen: onImportOpen, 
+    onClose: onImportClose 
+  } = useDisclosure()
   const toast = useToast()
 
   useEffect(() => {
@@ -337,6 +343,15 @@ function App() {
 
                   <HStack spacing={3}>
                     <Button
+                      leftIcon={<ExternalLinkIcon />}
+                      variant="ghost"
+                      size="sm"
+                      onClick={onImportOpen}
+                      rounded="xl"
+                    >
+                      導入 CSV
+                    </Button>
+                    <Button
                       leftIcon={<DownloadIcon />}
                       variant="ghost"
                       size="sm"
@@ -390,6 +405,14 @@ function App() {
             <AddHoldingModal
               isOpen={isOpen}
               onClose={onClose}
+              onSuccess={() => {
+                fetchHoldings()
+                fetchMarketData()
+              }}
+            />
+            <ImportDataModal
+              isOpen={isImportOpen}
+              onClose={onImportClose}
               onSuccess={() => {
                 fetchHoldings()
                 fetchMarketData()
