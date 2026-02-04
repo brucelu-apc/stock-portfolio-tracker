@@ -16,6 +16,7 @@ export interface Holding {
 }
 
 export interface AggregatedHolding {
+  user_id: string
   ticker: string
   name: string
   region: string
@@ -75,6 +76,7 @@ export const aggregateHoldings = (holdings: Holding[], marketData: { [ticker: st
     const roi = totalCost > 0 ? (unrealizedPnlTWD / totalCostTWD) * 100 : 0
 
     return {
+      user_id: latest.user_id,
       ticker,
       name: latest.name,
       region: latest.region,
