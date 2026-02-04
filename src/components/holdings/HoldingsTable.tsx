@@ -171,7 +171,7 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
               size="sm"
               variant="ghost"
               colorScheme="red"
-              onClick={() => onDelete(latestItem)}
+              onClick={() => onDelete(group)}
             />
           </HStack>
         </Td>
@@ -185,11 +185,28 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
                 <Text fontWeight="bold" mb={2} color="gray.600">買入明細</Text>
                 <VStack align="stretch" spacing={2}>
                   {group.items.map((item) => (
-                    <HStack key={item.id} justify="space-between" px={4}>
-                      <Text color="gray.500">{item.buy_date}</Text>
-                      <HStack spacing={8}>
-                        <Text>股數: {item.shares}</Text>
-                        <Text>價格: ${item.cost_price}</Text>
+                    <HStack key={item.id} justify="space-between" px={4} py={1} _hover={{ bg: 'gray.100' }} rounded="md">
+                      <HStack spacing={4}>
+                        <Text color="gray.500" w="100px">{item.buy_date}</Text>
+                        <Text w="100px">股數: {item.shares}</Text>
+                        <Text w="100px">價格: ${item.cost_price}</Text>
+                      </HStack>
+                      <HStack spacing={2}>
+                        <IconButton
+                          aria-label="Edit Item"
+                          icon={<EditIcon />}
+                          size="xs"
+                          variant="ghost"
+                          onClick={() => onEdit(item)}
+                        />
+                        <IconButton
+                          aria-label="Delete Item"
+                          icon={<DeleteIcon />}
+                          size="xs"
+                          variant="ghost"
+                          colorScheme="red"
+                          onClick={() => onDelete(item)}
+                        />
                       </HStack>
                     </HStack>
                   ))}
@@ -238,7 +255,7 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
   }, [holdings, marketData, sortConfig])
 
   const toast = useToast()
-  const [selectedHolding, setSelectedHolding] = useState<Holding | null>(null)
+  const [selectedHolding, setSelectedHolding] = useState<AggregatedHolding | Holding | null>(null)
   const { isOpen, onOpen, onClose } = useDisclosure()
   const { isOpen: isSellOpen, onOpen: onSellOpen, onClose: onSellClose } = useDisclosure()
 
@@ -247,7 +264,7 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
     onOpen()
   }
 
-  const handleDelete = (holding: Holding) => {
+  const handleDelete = (holding: AggregatedHolding | Holding) => {
     setSelectedHolding(holding)
     onSellOpen()
   }
@@ -344,7 +361,7 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
       <EditHoldingModal 
         isOpen={isOpen} 
         onClose={onClose} 
-        holding={selectedHolding} 
+        holding={selectedHolding as Holding} 
         onSuccess={onDataChange || (() => {})} 
       />
 
