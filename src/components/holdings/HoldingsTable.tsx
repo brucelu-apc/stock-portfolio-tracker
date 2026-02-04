@@ -255,17 +255,18 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
   }, [holdings, marketData, sortConfig])
 
   const toast = useToast()
-  const [selectedHolding, setSelectedHolding] = useState<AggregatedHolding | Holding | null>(null)
+  const [editHolding, setEditHolding] = useState<Holding | null>(null)
+  const [sellHolding, setSellHolding] = useState<AggregatedHolding | Holding | null>(null)
   const { isOpen, onOpen, onClose } = useDisclosure()
   const { isOpen: isSellOpen, onOpen: onSellOpen, onClose: onSellClose } = useDisclosure()
 
   const handleEdit = (holding: Holding) => {
-    setSelectedHolding(holding)
+    setEditHolding(holding)
     onOpen()
   }
 
   const handleDelete = (holding: AggregatedHolding | Holding) => {
-    setSelectedHolding(holding)
+    setSellHolding(holding)
     onSellOpen()
   }
 
@@ -361,15 +362,15 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
       <EditHoldingModal 
         isOpen={isOpen} 
         onClose={onClose} 
-        holding={selectedHolding as Holding} 
+        holding={editHolding} 
         onSuccess={onDataChange || (() => {})} 
       />
 
       <SellHoldingModal
         isOpen={isSellOpen}
         onClose={onSellClose}
-        holding={selectedHolding}
-        currentPrice={selectedHolding ? (marketData[selectedHolding.ticker]?.current_price) : undefined}
+        holding={sellHolding}
+        currentPrice={sellHolding ? (marketData[sellHolding.ticker]?.current_price) : undefined}
         onSuccess={onDataChange || (() => {})}
       />
     </>

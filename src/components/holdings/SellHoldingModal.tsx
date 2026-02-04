@@ -54,12 +54,12 @@ export const SellHoldingModal = ({ isOpen, onClose, onSuccess, holding, currentP
   useEffect(() => {
     if (holding) {
       const price = currentPrice || avgCost
-      setSellPrice(price.toString())
-      setSellShares(totalShares.toString())
+      setSellPrice(price?.toString() || '0')
+      setSellShares(totalShares?.toString() || '0')
 
       // Auto estimate Fee & Tax for TPE
       if (holding.region === 'TPE') {
-        const volume = price * totalShares
+        const volume = (price || 0) * (totalShares || 0)
         const estimatedFee = Math.max(20, Math.floor(volume * 0.001425 * 0.6))
         const estimatedTax = Math.floor(volume * 0.003)
         setSellFee(estimatedFee.toString())
