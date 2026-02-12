@@ -12,5 +12,5 @@ COPY app/ ./app/
 # Expose port
 EXPOSE 8000
 
-# Run with uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run with uvicorn — use shell form so ${PORT} gets expanded by Railway
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
