@@ -108,7 +108,7 @@ async def _handle_message(message: dict):
 
     # ── Advisory notification parsing ──
     try:
-        result = parse_notification(text)
+        result = parse_notification(text).model_dump()
 
         if result["total_stocks"] > 0:
             all_stocks = []

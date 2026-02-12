@@ -145,7 +145,7 @@ async def _handle_message_event(event: dict):
     # ── Advisory notification parsing ──
     # Try to parse as advisory notification
     try:
-        result = parse_notification(text)
+        result = parse_notification(text).model_dump()
 
         if result["total_stocks"] > 0:
             # Successfully parsed — collect all stocks
