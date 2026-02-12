@@ -231,7 +231,7 @@ async def _handle_command(text: str, chat_id: int, from_user: dict):
         settings = get_settings()
         url = settings.FRONTEND_URL
         if "localhost" in url:
-            url = "https://stock-portfolio-tracker.vercel.app"
+            url = "https://stock-portfolio-tracker-tawny.vercel.app"
         await send_html(
             chat_id,
             f"📊 <b>Dashboard 連結：</b>\n{url}",

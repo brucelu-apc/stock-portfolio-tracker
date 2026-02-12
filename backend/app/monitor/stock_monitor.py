@@ -424,7 +424,7 @@ async def _push_alert_to_line(alert: AlertEvent) -> bool:
         settings = get_settings()
         dashboard_url = settings.FRONTEND_URL
         if "localhost" in dashboard_url:
-            dashboard_url = "https://stock-portfolio-tracker.vercel.app"
+            dashboard_url = "https://stock-portfolio-tracker-tawny.vercel.app"
 
         # Send the alert via LINE
         return await send_alert_push(
@@ -492,7 +492,7 @@ async def _push_alert_to_telegram(alert: AlertEvent) -> bool:
         settings = get_settings()
         dashboard_url = settings.FRONTEND_URL
         if "localhost" in dashboard_url:
-            dashboard_url = "https://stock-portfolio-tracker.vercel.app"
+            dashboard_url = "https://stock-portfolio-tracker-tawny.vercel.app"
 
         # Send the alert via Telegram
         return await send_alert(

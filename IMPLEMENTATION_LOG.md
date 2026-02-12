@@ -114,7 +114,7 @@
 ### 3.4 資料庫遷移
 
 **`supabase/migrations/002_advisory_tables.sql`** (237 行)
-- 7 張新表：price_targets, advisory_tracking, price_alerts, forward_targets, forward_logs, user_messaging, notification_raw
+- 7 張新表：price_targets, advisory_tracking, price_alerts, forward_targets, forward_logs, user_messaging, advisory_notifications
 - RLS 政策：每張表皆有 select/insert/update 權限控制
 - 索引：ticker + is_latest 複合索引，triggered_at 排序索引
 
@@ -187,7 +187,7 @@
 - 配額管理：免費帳號每月 500 則限制，計數器追蹤
 
 **`backend/app/messaging/line_handler.py`** (403 行)
-- LINE Webhook 處理器（POST /api/line/webhook）
+- LINE Webhook 處理器（POST /webhook/line）
 - Signature 驗證（HMAC-SHA256）
 - 指令解析：
   - `/追蹤` — 查看追蹤清單
@@ -215,17 +215,18 @@
 - 無配額限制（相比 LINE 免費帳號的 500 則/月）
 
 **`backend/app/messaging/telegram_handler.py`** (406 行)
-- Telegram Webhook 處理器（POST /api/telegram/webhook）
+- Telegram Webhook 處理器（POST /webhook/telegram）
 - Update Token 驗證
 - 指令解析：`/start`, `/track`, `/status`, `/help`
 - 直接貼上通知文字 → 自動解析
 
 **`backend/app/messaging/stock_forwarder.py`** (333 行)
-- 轉發路由模組（Router prefix: /api/forward）
-- `POST /api/forward/stocks` — 執行轉發到選定目標
+- 轉發路由模組（路由自帶 /api/forward prefix）
+- `POST /api/forward` — 執行轉發到選定目標
 - `GET /api/forward/targets` — 查詢轉發目標列表
 - `POST /api/forward/targets` — 新增轉發目標
 - `DELETE /api/forward/targets/{id}` — 刪除轉發目標
+- `GET /api/forward/logs` — 查詢轉發紀錄
 - 轉發邏輯：依 platform (line/telegram) 分派到對應 notifier
 - 轉發記錄寫入 `forward_logs` 表
 
@@ -234,7 +235,7 @@
 **`src/components/advisory/StockForwardModal.tsx`** (441 行)
 - 轉發目標選擇 Modal
 - 目標管理：新增/刪除 LINE/Telegram 轉發目標
-- 勾選目標 → 呼叫 `POST /api/forward/stocks`
+- 勾選目標 → 呼叫 `POST /api/forward`
 - 結果顯示（成功/失敗計數）
 
 **`src/components/settings/MessagingSettings.tsx`** (355 行)
@@ -401,12 +402,13 @@
 |------|------|--------|------|
 | POST | `/api/parse` | Parser | 解析通知文字 |
 | POST | `/api/import` | Parser | 匯入解析結果到 DB |
-| POST | `/api/line/webhook` | LINE Bot | LINE Webhook 接收 |
-| POST | `/api/telegram/webhook` | Telegram Bot | Telegram Webhook 接收 |
-| POST | `/api/forward/stocks` | Forward | 轉發股票到多目標 |
+| POST | `/webhook/line` | LINE Bot | LINE Webhook 接收 |
+| POST | `/webhook/telegram` | Telegram Bot | Telegram Webhook 接收 |
+| POST | `/api/forward` | Forward | 轉發股票到多目標 |
 | GET | `/api/forward/targets` | Forward | 查詢轉發目標列表 |
 | POST | `/api/forward/targets` | Forward | 新增轉發目標 |
 | DELETE | `/api/forward/targets/{id}` | Forward | 刪除轉發目標 |
+| GET | `/api/forward/logs` | Forward | 查詢轉發紀錄 |
 
 ### main.py 直接路由
 

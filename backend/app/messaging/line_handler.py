@@ -267,7 +267,7 @@ async def _handle_command(text: str, reply_token: str, line_user_id: str):
 
     elif command == "/dashboard":
         settings = get_settings()
-        url = settings.FRONTEND_URL.replace("localhost:5173", "stock-portfolio-tracker.vercel.app")
+        url = settings.FRONTEND_URL.replace("localhost:5173", "stock-portfolio-tracker-tawny.vercel.app")
         await send_text_reply(reply_token, f"📊 Dashboard 連結：\n{url}")
 
     else:

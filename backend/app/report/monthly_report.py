@@ -330,7 +330,7 @@ def build_report_flex(data: dict) -> dict:
     settings = get_settings()
     dashboard_url = settings.FRONTEND_URL
     if "localhost" in dashboard_url:
-        dashboard_url = "https://stock-portfolio-tracker.vercel.app"
+        dashboard_url = "https://stock-portfolio-tracker-tawny.vercel.app"
 
     bubble["footer"] = {
         "type": "box",

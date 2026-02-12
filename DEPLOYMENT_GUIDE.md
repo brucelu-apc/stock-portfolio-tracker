@@ -132,7 +132,7 @@ ORDER BY table_name;
 |----------|-----|------|
 | `SUPABASE_URL` | `https://xxxxx.supabase.co` | Supabase 專案 URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | `eyJxxxxxx` | Settings → API → service_role key |
-| `FRONTEND_URL` | `https://stock-portfolio-tracker.vercel.app` | Vercel 前端網址 |
+| `FRONTEND_URL` | `https://stock-portfolio-tracker-tawny.vercel.app` | Vercel 前端網址 |
 | `LINE_CHANNEL_ACCESS_TOKEN` | (見 3.4) | LINE Bot Channel Access Token |
 | `LINE_CHANNEL_SECRET` | (見 3.4) | LINE Bot Channel Secret |
 | `TELEGRAM_BOT_TOKEN` | (見 3.5) | Telegram Bot Token |
@@ -167,7 +167,7 @@ https://your-app.up.railway.app/api/monitor/status
    - **Channel Secret**
 4. 設定 Webhook URL：
    ```
-   https://your-app.up.railway.app/api/line/webhook
+   https://your-app.up.railway.app/webhook/line
    ```
 5. 開啟 **Use webhook** 開關
 6. 關閉 **Auto-reply messages**
@@ -178,7 +178,7 @@ https://your-app.up.railway.app/api/monitor/status
 2. 發送 `/newbot`，取得 Bot Token
 3. 設定 Webhook（在瀏覽器開啟）：
    ```
-   https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=https://your-app.up.railway.app/api/telegram/webhook
+   https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=https://your-app.up.railway.app/webhook/telegram
    ```
 4. 驗證：
    ```
