@@ -140,19 +140,59 @@ def update_market_data():
                 alerts.append({"ticker": ticker, "price": price, "sl_price": cost})
 
     if alerts:
-        send_alerts_to_openclaw(alerts)
+        send_alerts_to_line(alerts)
 
-def send_alerts_to_openclaw(alerts):
-    url = os.environ.get("OPENCLAW_GATEWAY_URL")
-    token = os.environ.get("OPENCLAW_GATEWAY_TOKEN")
-    target = os.environ.get("NOTIFICATION_TARGET_ID")
-    if not (url and token and target): return
-    
-    endpoint = f"{url.rstrip('/')}/api/v1/message"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    for a in alerts:
-        msg = f"⚠️ 【停損預警】\n代碼：{a['ticker']}\n現價：${a['price']:.2f}\n停損價：${a['sl_price']:.2f}\n狀態：股價已進入停損價 +/-2% 警戒區！🍡"
-        requests.post(endpoint, json={"action": "send", "channel": "line", "target": target, "message": msg}, headers=headers)
+def send_alerts_to_line(alerts):
+    """
+    Send price alerts via LINE Messaging API (replaces OpenClaw).
+    Falls back to OpenClaw if LINE credentials are not set.
+    """
+    line_token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
+    line_target = os.environ.get("LINE_ALERT_TARGET_ID")
+
+    if line_token and line_target:
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {line_token}",
+        }
+        for a in alerts:
+            msg = (
+                f"⚠️ 【停損預警】\n"
+                f"代碼：{a['ticker']}\n"
+                f"現價：${a['price']:.2f}\n"
+                f"停損價：${a['sl_price']:.2f}\n"
+                f"狀態：股價已進入停損價 ±2% 警戒區！"
+            )
+            payload = {
+                "to": line_target,
+                "messages": [{"type": "text", "text": msg}],
+            }
+            try:
+                resp = requests.post(
+                    "https://api.line.me/v2/bot/message/push",
+                    json=payload, headers=headers, timeout=10,
+                )
+                if resp.status_code == 200:
+                    print(f"LINE alert sent for {a['ticker']}")
+                else:
+                    print(f"LINE push failed: {resp.status_code} {resp.text}")
+            except Exception as e:
+                print(f"LINE push error: {e}")
+        return
+
+    # Fallback: OpenClaw (legacy)
+    oc_url = os.environ.get("OPENCLAW_GATEWAY_URL")
+    oc_token = os.environ.get("OPENCLAW_GATEWAY_TOKEN")
+    oc_target = os.environ.get("NOTIFICATION_TARGET_ID")
+    if oc_url and oc_token and oc_target:
+        endpoint = f"{oc_url.rstrip('/')}/api/v1/message"
+        oc_headers = {"Authorization": f"Bearer {oc_token}", "Content-Type": "application/json"}
+        for a in alerts:
+            msg = f"⚠️ 【停損預警】\n代碼：{a['ticker']}\n現價：${a['price']:.2f}\n停損價：${a['sl_price']:.2f}\n狀態：股價已進入停損價 +/-2% 警戒區！🍡"
+            requests.post(endpoint, json={"action": "send", "channel": "line", "target": oc_target, "message": msg}, headers=oc_headers)
+        print("Alerts sent via OpenClaw (fallback)")
+    else:
+        print("No notification channel configured (LINE or OpenClaw)")
 
 if __name__ == "__main__":
     update_market_data()

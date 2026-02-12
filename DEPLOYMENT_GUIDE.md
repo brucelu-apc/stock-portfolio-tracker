@@ -107,7 +107,7 @@ ORDER BY table_name;
 - `advisory_tracking`
 - `forward_logs`
 - `forward_targets`
-- `notification_raw`
+- `advisory_notifications`
 - `price_alerts`
 - `price_targets`
 - `user_messaging`

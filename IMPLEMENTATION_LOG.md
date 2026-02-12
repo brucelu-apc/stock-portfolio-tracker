@@ -445,7 +445,7 @@ price_alerts           — 觸發的價格警示（defense_breach/target_reached
 forward_targets        — 轉發目標（LINE group/Telegram chat）
 forward_logs           — 轉發歷史記錄
 user_messaging         — 使用者通知偏好（LINE/Telegram ID + 開關）
-notification_raw       — 原始通知文字備份
+advisory_notifications — 原始通知文字備份（含 message_type、source 欄位）
 ```
 
 ### 關鍵索引
