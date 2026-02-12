@@ -101,7 +101,7 @@ async def forward_stocks(req: ForwardRequest):
 
     for target in req.targets:
         try:
-            ok = await _send_to_target(
+            ok, error_detail = await _send_to_target(
                 platform=target.platform,
                 target_id=target.target_id,
                 stocks=[s.model_dump() for s in req.stocks],
@@ -129,7 +129,7 @@ async def forward_stocks(req: ForwardRequest):
                     target_name=target.target_name,
                     platform=target.platform,
                     success=False,
-                    error="Send failed",
+                    error=error_detail,
                 ))
 
         except Exception as e:
@@ -279,28 +279,40 @@ async def _send_to_target(
     target_id: str,
     stocks: list[dict],
     sender_name: str = "Stock Tracker",
-) -> bool:
-    """Route message to the correct platform sender."""
+) -> tuple[bool, str]:
+    """
+    Route message to the correct platform sender.
+
+    Returns:
+        (success, error_detail) — error_detail is empty string on success
+    """
+    settings = get_settings()
 
     if platform == "telegram":
+        if not settings.TELEGRAM_BOT_TOKEN:
+            return False, "TELEGRAM_BOT_TOKEN not configured"
         from app.messaging.telegram_notifier import send_forward_message
-        return await send_forward_message(
+        ok = await send_forward_message(
             chat_id=target_id,
             stocks=stocks,
             sender_name=sender_name,
         )
+        return ok, ("" if ok else "Telegram send failed")
 
     elif platform == "line":
+        if not settings.LINE_CHANNEL_ACCESS_TOKEN:
+            return False, "LINE_CHANNEL_ACCESS_TOKEN not configured"
         from app.messaging.line_notifier import send_forward_push
-        return await send_forward_push(
+        ok = await send_forward_push(
             to=target_id,
             stocks=stocks,
             sender_name=sender_name,
         )
+        return ok, ("" if ok else "LINE push failed — check token & target_id")
 
     else:
         logger.warning(f"Unknown platform: {platform}")
-        return False
+        return False, f"Unknown platform: {platform}"
 
 
 async def _log_forward(

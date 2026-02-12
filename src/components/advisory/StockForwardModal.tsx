@@ -188,11 +188,17 @@ export const StockForwardModal = ({
         })
         onClose()
       } else {
+        // Show detailed failure reasons from each target
+        const failDetails = resp.results
+          ?.filter((r) => !r.success)
+          .map((r) => `${r.target_name}(${r.platform}): ${r.error}`)
+          .join('; ')
         toast({
           title: '轉發失敗',
-          description: '所有目標都發送失敗',
+          description: failDetails || '所有目標都發送失敗',
           status: 'error',
-          duration: 4000,
+          duration: 6000,
+          isClosable: true,
         })
       }
     } catch (err: any) {

@@ -106,11 +106,13 @@ export function useRealtimeSubscription(
           callbacksRef.current.onTrackingChange?.(payload)
         }
       )
-      .subscribe((status) => {
+      .subscribe((status, err) => {
         if (status === 'SUBSCRIBED') {
           console.log('[Realtime] Advisory channel subscribed')
         } else if (status === 'CHANNEL_ERROR') {
-          console.error('[Realtime] Advisory channel error')
+          // Realtime not enabled for some tables — degrade gracefully
+          // User can enable Realtime in Supabase Dashboard → Database → Replication
+          console.warn('[Realtime] Advisory channel error — live updates disabled. Enable Realtime for tables in Supabase Dashboard.', err?.message || '')
         }
       })
 

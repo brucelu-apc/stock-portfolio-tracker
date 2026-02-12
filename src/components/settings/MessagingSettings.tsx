@@ -95,10 +95,9 @@ export const MessagingSettings = ({ userId }: MessagingSettingsProps) => {
         .from('user_messaging')
         .select('*')
         .eq('user_id', userId)
-        .single()
+        .maybeSingle()
 
-      if (error && error.code !== 'PGRST116') {
-        // PGRST116 = not found (expected if no record yet)
+      if (error) {
         throw error
       }
 
