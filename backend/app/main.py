@@ -77,7 +77,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         settings.FRONTEND_URL,
-        "https://stock-portfolio-tracker.vercel.app",  # production
+        "https://stock-portfolio-tracker-tawny.vercel.app",  # production
     ],
     allow_credentials=True,
     allow_methods=["*"],
