@@ -37,6 +37,10 @@ import { HistorySummary } from './components/holdings/HistorySummary'
 import { UserManagement } from './components/admin/UserManagement'
 import { SettingsPage } from './components/settings/SettingsPage'
 import { ImportDataModal } from './components/holdings/ImportDataModal'
+import { NotificationInput } from './components/advisory/NotificationInput'
+import { AdvisoryTable } from './components/advisory/AdvisoryTable'
+import { AlertPanel } from './components/advisory/AlertPanel'
+import { AdvisoryHistory } from './components/advisory/AdvisoryHistory'
 import { Session } from '@supabase/supabase-js'
 import { aggregateHoldings } from './utils/calculations'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -283,9 +287,36 @@ function App() {
       case 'admin':
         return <UserManagement />
       case 'settings':
-        return <SettingsPage userEmail={session.user.email} status={profile?.status} onNavigate={(page) => setCurrentPage(page)} />
+        return <SettingsPage userId={session.user.id} userEmail={session.user.email} status={profile?.status} onNavigate={(page) => setCurrentPage(page)} />
       case 'profit':
         return <ProfitOverview history={history} />
+      case 'advisory':
+        return (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }}>
+            <SimpleGrid columns={{ base: 1, lg: 3 }} spacing={6} mb={6}>
+              <Box gridColumn={{ base: '1', lg: '1 / 3' }}>
+                <NotificationInput
+                  userId={session.user.id}
+                  onImportSuccess={() => {
+                    fetchMarketData()
+                  }}
+                />
+              </Box>
+              <Box>
+                <AlertPanel userId={session.user.id} />
+              </Box>
+            </SimpleGrid>
+            <Box mb={6}>
+              <AdvisoryTable
+                userId={session.user.id}
+                holdings={holdings}
+              />
+            </Box>
+            <Box mb={6}>
+              <AdvisoryHistory userId={session.user.id} />
+            </Box>
+          </motion.div>
+        )
       case 'reset-password':
         return <ResetPasswordPage onComplete={() => setCurrentPage('dashboard')} />
       default:

@@ -1,15 +1,31 @@
-name: Update Market Data
+name: Market Data Backup Update
+
+# ===================================================================
+# Role: BACKUP / FALLBACK for Railway backend
+# ===================================================================
+# Primary market data updates now run on Railway via APScheduler:
+#   - Real-time TW: every 30s during market hours (twstock)
+#   - Daily TW close: 14:05 TST (yfinance)
+#   - Daily US close: 05:30 TST (yfinance + FX)
+#   - Monthly report: 1st of each month, 14:30 TST
+#
+# This GitHub Actions workflow serves as:
+#   1. Daily backup — runs after market close to ensure prices are updated
+#      even if Railway is down
+#   2. Manual trigger — for ad-hoc price refreshes
+#   3. CI smoke test — validates the update script still works
+# ===================================================================
 
 on:
   schedule:
-    # 每天 UTC 06:00 (台北時間 14:00) - 台股收盤後
-    - cron: '0 6 * * *'
-    # 每天 UTC 21:30 (台北時間 05:30) - 美股收盤後
-    - cron: '30 21 * * *'
-  workflow_dispatch: # 允許手動觸發
+    # Backup: UTC 07:00 (TST 15:00) — 1 hour after Railway's TW close job
+    - cron: '0 7 * * 1-5'
+    # Backup: UTC 22:00 (TST 06:00) — 30 min after Railway's US close job
+    - cron: '0 22 * * 1-5'
+  workflow_dispatch: # Manual trigger
 
 jobs:
-  update:
+  backup-update:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -25,25 +41,35 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r scripts/requirements.txt
 
-      - name: Run update script
+      - name: Check Railway backend health
+        id: health_check
+        continue-on-error: true
+        env:
+          RAILWAY_BACKEND_URL: ${{ secrets.RAILWAY_BACKEND_URL }}
+        run: |
+          if [ -n "$RAILWAY_BACKEND_URL" ]; then
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${RAILWAY_BACKEND_URL}/health" --max-time 10 || echo "000")
+            echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+            if [ "$STATUS" = "200" ]; then
+              echo "Railway backend is healthy — this is a backup run"
+            else
+              echo "Railway backend may be down (status: $STATUS) — running full update"
+            fi
+          else
+            echo "status=000" >> "$GITHUB_OUTPUT"
+            echo "RAILWAY_BACKEND_URL not set — running full update"
+          fi
+
+      - name: Run market data update (backup)
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_ALERT_TARGET_ID: ${{ secrets.LINE_ALERT_TARGET_ID }}
           OPENCLAW_GATEWAY_URL: ${{ secrets.OPENCLAW_GATEWAY_URL }}
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
           NOTIFICATION_TARGET_ID: ${{ secrets.NOTIFICATION_TARGET_ID }}
         run: python scripts/update_market_data.py
 
-      - name: Generate Monthly Report Poster
-        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 6 1 * *'
-        env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          OPENCLAW_GATEWAY_URL: ${{ secrets.OPENCLAW_GATEWAY_URL }}
-          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
-          NOTIFICATION_TARGET_ID: ${{ secrets.NOTIFICATION_TARGET_ID }}
-        run: |
-          playwright install chromium
-          playwright install-deps chromium
-          python scripts/generate_report_html.py > report.html
-          python scripts/render_poster.py
+      # Monthly report is now handled by Railway APScheduler
+      # No Playwright needed — removed the poster generation step

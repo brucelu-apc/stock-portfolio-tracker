@@ -29,6 +29,7 @@ export const Navbar = ({ userEmail, role, currentPage, onNavigate }: NavbarProps
 
   const navItems = [
     { label: '資產儀表板', value: 'dashboard' },
+    { label: '投顧追蹤', value: 'advisory' },
     { label: '獲利總覽', value: 'profit' },
     ...(role === 'admin' ? [{ label: '管理後台', value: 'admin' }] : []),
   ]

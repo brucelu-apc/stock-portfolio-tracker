@@ -15,14 +15,16 @@ import {
 import { ArrowBackIcon } from '@chakra-ui/icons'
 import { useState } from 'react'
 import { supabase } from '../../services/supabase'
+import { MessagingSettings } from './MessagingSettings'
 
 interface SettingsPageProps {
+  userId: string
   userEmail: string | undefined
   status: string | undefined
   onNavigate: (page: string) => void
 }
 
-export const SettingsPage = ({ userEmail, status, onNavigate }: SettingsPageProps) => {
+export const SettingsPage = ({ userId, userEmail, status, onNavigate }: SettingsPageProps) => {
   const [newPassword, setNewPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const toast = useToast()
@@ -86,6 +88,11 @@ export const SettingsPage = ({ userEmail, status, onNavigate }: SettingsPageProp
             </Button>
           </VStack>
         </form>
+
+        <Divider />
+
+        {/* Messaging & Notification Settings */}
+        <MessagingSettings userId={userId} />
       </VStack>
     </Box>
   )
