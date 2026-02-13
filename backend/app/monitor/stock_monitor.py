@@ -134,6 +134,8 @@ async def realtime_tw_monitor():
         # 5. Check and process alerts
         await _process_alerts(current_prices)
 
+        logger.info(f"TW realtime: {len(prices)} tickers updated")
+
     except Exception as e:
         logger.error(f"Realtime monitor error: {e}", exc_info=True)
 

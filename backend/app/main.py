@@ -33,6 +33,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Reduce APScheduler noise — only show warnings (suppress per-job SUCCESS logs)
+logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
