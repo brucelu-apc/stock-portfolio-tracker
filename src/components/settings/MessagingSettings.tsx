@@ -201,7 +201,7 @@ export const MessagingSettings = ({ userId }: MessagingSettingsProps) => {
               <Text fontSize="xs" color="gray.500">
                 {messaging?.line_user_id
                   ? `ID: ${messaging.line_user_id.substring(0, 12)}...`
-                  : '加入 LINE Bot 好友即自動綁定'}
+                  : '在 LINE Bot 輸入 /link <email> 綁定'}
               </Text>
             </VStack>
           </HStack>
@@ -319,8 +319,16 @@ export const MessagingSettings = ({ userId }: MessagingSettingsProps) => {
                   <Text fontSize="sm">
                     1. 加入 Stock Tracker LINE Bot 為好友
                   </Text>
-                  <Text fontSize="sm">2. 系統自動綁定您的 LINE 帳號</Text>
-                  <Text fontSize="sm">3. 開始接收即時價格警示推播</Text>
+                  <Text fontSize="sm">
+                    2. 在 LINE Bot 對話中輸入：
+                  </Text>
+                  <Code fontSize="sm" px={2} py={1} rounded="md">
+                    /link your@email.com
+                  </Code>
+                  <Text fontSize="sm">
+                    （使用您在此 Dashboard 註冊的 Email）
+                  </Text>
+                  <Text fontSize="sm">3. 綁定成功後即可接收即時價格警示推播</Text>
                   <Text fontSize="xs" color="gray.500" mt={1}>
                     注意：LINE 免費方案每月限 500 則推播
                   </Text>

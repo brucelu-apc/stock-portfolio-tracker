@@ -122,7 +122,10 @@ async def _handle_message_event(event: dict):
     message = event.get("message", {})
     message_type = message.get("type")
     reply_token = event.get("replyToken", "")
-    line_user_id = event.get("source", {}).get("userId", "")
+    source = event.get("source", {})
+    source_type = source.get("type", "user")  # "user", "group", or "room"
+    line_user_id = source.get("userId", "")
+    group_id = source.get("groupId", "") if source_type == "group" else ""
 
     if message_type != "text":
         # Non-text messages (images, stickers, etc.)
@@ -139,7 +142,7 @@ async def _handle_message_event(event: dict):
 
     # ── Command handling ──
     if text.startswith("/"):
-        await _handle_command(text, reply_token, line_user_id)
+        await _handle_command(text, reply_token, line_user_id, group_id=group_id)
         return
 
     # ── Advisory notification parsing ──
@@ -198,10 +201,15 @@ async def _handle_follow_event(event: dict):
         "• 直接貼上投顧通知 → 自動解析股票\n"
         "• 系統自動監控防守價/目標價\n"
         "• 觸發條件時即時推送警示\n\n"
+        "🔗 首先請綁定帳號：\n"
+        "/link your@email.com\n"
+        "（使用您在 Dashboard 註冊的 Email）\n\n"
         "📝 使用方式：\n"
         "直接貼上投顧群組的通知文字即可！\n\n"
         "⌨️ 指令列表：\n"
         "/help — 使用說明\n"
+        "/link <email> — 綁定帳號\n"
+        "/groupid — 查詢群組 ID\n"
         "/status — 監控狀態\n"
         "/quota — LINE 訊息額度"
     )
@@ -217,9 +225,18 @@ async def _handle_unfollow_event(event: dict):
 
 # ─── Command Handler ─────────────────────────────────────────
 
-async def _handle_command(text: str, reply_token: str, line_user_id: str):
+async def _handle_command(
+    text: str,
+    reply_token: str,
+    line_user_id: str,
+    group_id: str = "",
+):
     """Handle slash commands from LINE users."""
     command = text.lower().split()[0]
+
+    # Extract arguments after command
+    parts = text.strip().split(maxsplit=1)
+    args = parts[1] if len(parts) > 1 else ""
 
     if command == "/help":
         help_text = (
@@ -228,6 +245,8 @@ async def _handle_command(text: str, reply_token: str, line_user_id: str):
             "直接貼上投顧群組通知 → 自動解析\n\n"
             "⌨️ 指令：\n"
             "/help — 顯示此說明\n"
+            "/link <email> — 綁定 Dashboard 帳號\n"
+            "/groupid — 查看本群組 ID（群組內使用）\n"
             "/status — 查看監控狀態\n"
             "/quota — 查看 LINE 訊息額度\n"
             "/dashboard — Dashboard 連結\n\n"
@@ -265,6 +284,51 @@ async def _handle_command(text: str, reply_token: str, line_user_id: str):
 
         await send_text_reply(reply_token, text)
 
+    elif command == "/link":
+        if not args:
+            await send_text_reply(
+                reply_token,
+                "請提供您的 Dashboard 帳號 Email：\n"
+                "/link your@email.com",
+            )
+            return
+
+        email = args.strip()
+        success = await _link_line_account(line_user_id, email)
+        if success:
+            await send_text_reply(
+                reply_token,
+                f"✅ 帳號綁定成功！\n\n"
+                f"Email：{email}\n"
+                f"LINE ID：{line_user_id[:8]}...\n\n"
+                "現在起，投顧通知貼到這裡會自動匯入 Dashboard，"
+                "價格警示也會透過 LINE 推播通知你！",
+            )
+        else:
+            await send_text_reply(
+                reply_token,
+                f"❌ 綁定失敗\n\n"
+                f"找不到 Email：{email}\n"
+                "請確認您已在 Dashboard 註冊帳號，"
+                "並使用相同的 Email。",
+            )
+
+    elif command == "/groupid":
+        if not group_id:
+            await send_text_reply(
+                reply_token,
+                "⚠️ 此指令僅限群組內使用。\n\n"
+                "請把 Bot 加入 LINE 群組，"
+                "然後在群組裡輸入 /groupid 就能取得群組 ID。",
+            )
+        else:
+            await send_text_reply(
+                reply_token,
+                f"📋 本群組 ID：\n\n{group_id}\n\n"
+                "請複製上方 ID，到 Dashboard 的轉發目標中"
+                "新增此群組即可接收轉發通知。",
+            )
+
     elif command == "/dashboard":
         settings = get_settings()
         url = settings.FRONTEND_URL.replace("localhost:5173", "stock-portfolio-tracker-tawny.vercel.app")
@@ -272,6 +336,64 @@ async def _handle_command(text: str, reply_token: str, line_user_id: str):
 
     else:
         await send_text_reply(reply_token, f"未知指令：{command}\n輸入 /help 查看可用指令。")
+
+
+# ─── Account Linking ─────────────────────────────────────────
+
+async def _link_line_account(line_user_id: str, email: str) -> bool:
+    """
+    Link a LINE user ID to a Supabase user account via email.
+
+    Flow:
+    1. Look up user by email in auth.users (via service role)
+    2. Upsert line_user_id in user_messaging table
+
+    This enables:
+    - Auto-import of advisory notifications parsed in LINE
+    - Push notifications for price alerts to LINE
+    """
+    try:
+        from supabase import create_client
+
+        settings = get_settings()
+        if not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_ROLE_KEY:
+            logger.error("Supabase credentials not configured for LINE link")
+            return False
+
+        supabase = create_client(
+            settings.SUPABASE_URL,
+            settings.SUPABASE_SERVICE_ROLE_KEY,
+        )
+
+        # Look up user by email in Supabase Auth
+        users_res = supabase.auth.admin.list_users()
+        target_user = None
+        for user in users_res:
+            if hasattr(user, 'email') and user.email == email:
+                target_user = user
+                break
+
+        if not target_user:
+            logger.warning(f"LINE link failed: email {email} not found in auth.users")
+            return False
+
+        user_id = str(target_user.id)
+
+        # Upsert user_messaging with line_user_id
+        supabase.table("user_messaging").upsert(
+            {
+                "user_id": user_id,
+                "line_user_id": line_user_id,
+            },
+            on_conflict="user_id",
+        ).execute()
+
+        logger.info(f"LINE linked: {line_user_id[:8]}... → user={user_id[:8]}...")
+        return True
+
+    except Exception as e:
+        logger.error(f"LINE link error: {e}")
+        return False
 
 
 # ─── Auto-registration & Import ──────────────────────────────
