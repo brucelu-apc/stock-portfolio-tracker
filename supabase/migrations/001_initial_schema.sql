@@ -1,0 +1,13 @@
+-- ============================================================
+-- Migration 001: Initial Schema (existing tables — for reference)
+-- ============================================================
+-- This file documents the existing 4 tables already in Supabase.
+-- Do NOT run this migration — it is for documentation only.
+-- Actual tables were created via supabase_schema.sql at project init.
+--
+-- Tables:
+--   1. user_profiles (id, email, role, status)
+--   2. market_data (ticker PK, region, current_price, prev_close)
+--   3. portfolio_holdings (id, user_id, ticker, shares, cost_price, ...)
+--   4. historical_holdings (id, user_id, ticker, shares, sell_price, ...)
+-- ============================================================

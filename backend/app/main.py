@@ -7,6 +7,7 @@ Handles:
   - LINE / Telegram webhooks (Phase 3-4)
   - Stock info forwarding (Phase 4)
   - Monthly report generation (Phase 5)
+  - Registration email notifications (Phase 6)
 """
 import logging
 from contextlib import asynccontextmanager
@@ -20,6 +21,7 @@ from app.parser.notification_parser import router as parser_router
 from app.messaging.line_handler import router as line_router
 from app.messaging.telegram_handler import router as telegram_router
 from app.messaging.stock_forwarder import router as forward_router
+from app.routers.registrations import router as registrations_router
 from app.monitor.stock_monitor import (
     init_monitor,
     shutdown_monitor,
@@ -60,6 +62,12 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Supabase credentials not set — monitor disabled")
 
+    # Log SMTP config status
+    if settings.SMTP_USER and settings.SMTP_PASS:
+        logger.info(f"SMTP configured: {settings.SMTP_HOST}:{settings.SMTP_PORT}")
+    else:
+        logger.warning("SMTP not configured — registration emails disabled")
+
     yield
 
     # Shutdown
@@ -69,8 +77,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Stock Advisory Tracker API",
-    version="0.4.0",
-    description="投顧通知解析 + 即時股價監控 + LINE/Telegram 整合 + 推送通知 + 轉發功能",
+    version="0.5.0",
+    description="投顧通知解析 + 即時股價監控 + LINE/Telegram 整合 + 推送通知 + 轉發功能 + 註冊通知",
     lifespan=lifespan,
 )
 
@@ -92,6 +100,7 @@ app.include_router(parser_router, prefix="/api", tags=["Parser"])
 app.include_router(line_router, tags=["LINE Bot"])
 app.include_router(telegram_router, tags=["Telegram Bot"])
 app.include_router(forward_router, tags=["Forward"])
+app.include_router(registrations_router, prefix="/api", tags=["Registrations"])
 
 
 # --- Monitor endpoints ---
@@ -138,4 +147,4 @@ async def generate_report(send: bool = False):
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "service": "stock-advisory-tracker", "version": "0.4.0"}
+    return {"status": "ok", "service": "stock-advisory-tracker", "version": "0.5.0"}

@@ -75,6 +75,15 @@ export interface ForwardResponse {
   results: ForwardResult[]
 }
 
+export interface RegistrationNotifyRequest {
+  user_id: string
+  email: string
+  display_name?: string
+  phone?: string
+  company?: string
+  notes?: string
+}
+
 // ─── API calls ──────────────────────────────────────────────
 
 /**
@@ -209,5 +218,24 @@ export async function forwardStocks(
   })
 
   if (!response.ok) throw new Error(`Forward failed: ${response.status}`)
+  return response.json()
+}
+
+// ─── Registration API ───────────────────────────────────────
+
+/**
+ * Notify admins about a new user registration via email.
+ */
+export async function notifyRegistration(info: RegistrationNotifyRequest): Promise<any> {
+  const response = await fetch(`${BACKEND_URL}/api/registrations/notify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(info),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Notification failed: ${response.status} ${response.statusText}`)
+  }
+
   return response.json()
 }

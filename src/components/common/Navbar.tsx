@@ -12,24 +12,41 @@ import {
   MenuItem,
   MenuDivider,
   VStack,
+  IconButton,
+  Tooltip,
 } from '@chakra-ui/react'
+import { BellIcon } from '@chakra-ui/icons'
 import { supabase } from '../../services/supabase'
 
 interface NavbarProps {
   userEmail: string | undefined
   role: string | undefined
+  canAccessAdvisory: boolean
+  hasAnnouncement: boolean
   currentPage: string
   onNavigate: (page: string) => void
+  onOpenAnnouncement: () => void
 }
 
-export const Navbar = ({ userEmail, role, currentPage, onNavigate }: NavbarProps) => {
+export const Navbar = ({
+  userEmail,
+  role,
+  canAccessAdvisory,
+  hasAnnouncement,
+  currentPage,
+  onNavigate,
+  onOpenAnnouncement,
+}: NavbarProps) => {
   const handleSignOut = async () => {
     await supabase.auth.signOut()
   }
 
   const navItems = [
     { label: '資產儀表板', value: 'dashboard' },
-    { label: '投顧追蹤', value: 'advisory' },
+    // Only show advisory tab if user has permission or is admin
+    ...(canAccessAdvisory || role === 'admin'
+      ? [{ label: '投顧追蹤', value: 'advisory' }]
+      : []),
     { label: '獲利總覽', value: 'profit' },
     ...(role === 'admin' ? [{ label: '管理後台', value: 'admin' }] : []),
   ]
@@ -96,7 +113,22 @@ export const Navbar = ({ userEmail, role, currentPage, onNavigate }: NavbarProps
             </HStack>
           </HStack>
 
-          <Flex alignItems={'center'}>
+          <Flex alignItems={'center'} gap={2}>
+            {/* Announcement bell icon — only show if there's an active announcement */}
+            {hasAnnouncement && (
+              <Tooltip label="查看系統公告" placement="bottom">
+                <IconButton
+                  aria-label="查看公告"
+                  icon={<BellIcon />}
+                  variant="ghost"
+                  size="sm"
+                  color="orange.400"
+                  onClick={onOpenAnnouncement}
+                  _hover={{ bg: 'orange.50' }}
+                />
+              </Tooltip>
+            )}
+
             <Menu>
               <MenuButton
                 as={Button}

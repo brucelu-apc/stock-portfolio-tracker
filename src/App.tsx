@@ -28,6 +28,8 @@ import { supabase } from './services/supabase'
 import { AuthPage } from './components/auth/AuthPage'
 import { ResetPasswordPage } from './components/auth/ResetPasswordPage'
 import { Navbar } from './components/common/Navbar'
+import { AnnouncementModal } from './components/common/AnnouncementModal'
+import { PersonalInfoModal } from './components/auth/PersonalInfoModal'
 import { AddHoldingModal } from './components/holdings/AddHoldingModal'
 import { HoldingsTable } from './components/holdings/HoldingsTable'
 import { AllocationCharts } from './components/dashboard/AllocationCharts'
@@ -58,12 +60,23 @@ function App() {
   const [refreshing, setRefreshing] = useState(false)
   const [isDataLoading, setIsDataLoading] = useState(true)
   const { isOpen, onOpen, onClose } = useDisclosure()
-  const { 
-    isOpen: isImportOpen, 
-    onOpen: onImportOpen, 
-    onClose: onImportClose 
+  const {
+    isOpen: isImportOpen,
+    onOpen: onImportOpen,
+    onClose: onImportClose
   } = useDisclosure()
   const toast = useToast()
+
+  // --- Announcement state ---
+  const [announcement, setAnnouncement] = useState<any>(null)
+  const {
+    isOpen: isAnnouncementOpen,
+    onOpen: onAnnouncementOpen,
+    onClose: onAnnouncementClose,
+  } = useDisclosure()
+
+  // --- Personal info modal state (first-time login) ---
+  const [showPersonalInfo, setShowPersonalInfo] = useState(false)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -73,7 +86,9 @@ function App() {
           fetchProfile(session.user.id),
           fetchHoldings(),
           fetchHistory(),
-          fetchMarketData()
+          fetchMarketData(),
+          fetchAnnouncement(),
+          checkRegistrationInfo(session.user.id),
         ]).then(() => {
           setIsDataLoading(false)
           setLoading(false)
@@ -92,6 +107,8 @@ function App() {
         fetchHoldings()
         fetchHistory()
         fetchMarketData()
+        fetchAnnouncement()
+        checkRegistrationInfo(session.user.id)
       }
     })
 
@@ -149,9 +166,50 @@ function App() {
     }
   }
 
+  // --- Feature 1: Fetch latest active announcement ---
+  const fetchAnnouncement = async () => {
+    const { data } = await supabase
+      .from('announcements')
+      .select('*')
+      .eq('is_active', true)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (data) {
+      setAnnouncement(data)
+      // Auto-show on login (only once per session)
+      const dismissedId = sessionStorage.getItem('dismissed_announcement')
+      if (dismissedId !== data.id) {
+        onAnnouncementOpen()
+      }
+    }
+  }
+
+  const handleAnnouncementClose = () => {
+    if (announcement) {
+      sessionStorage.setItem('dismissed_announcement', announcement.id)
+    }
+    onAnnouncementClose()
+  }
+
+  // --- Feature 3: Check if user has filled in registration info ---
+  const checkRegistrationInfo = async (userId: string) => {
+    const { data } = await supabase
+      .from('user_registration_info')
+      .select('user_id')
+      .eq('user_id', userId)
+      .maybeSingle()
+
+    if (!data) {
+      // First-time login — show personal info modal
+      setShowPersonalInfo(true)
+    }
+  }
+
   const handleManualRefresh = async () => {
     setRefreshing(true)
-    
+
     try {
       const ghToken = import.meta.env.VITE_GITHUB_TOKEN
       const ghOwner = import.meta.env.VITE_GITHUB_OWNER
@@ -204,7 +262,7 @@ function App() {
 
     // Define CSV headers
     const headers = ['ticker', 'region', 'name', 'shares', 'cost_price', 'strategy_mode', 'buy_date']
-    
+
     // Create rows
     const rows = holdings.map(h => [
       h.ticker,
@@ -219,7 +277,7 @@ function App() {
     const csvContent = [headers.join(','), ...rows].join('\n')
     const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
-    
+
     const link = document.createElement('a')
     link.setAttribute('href', url)
     link.setAttribute('download', `portfolio_export_${new Date().toISOString().split('T')[0]}.csv`)
@@ -227,7 +285,7 @@ function App() {
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
-    
+
     toast({
       title: '導出成功',
       description: '持股資料已轉為 CSV 檔案下載。',
@@ -291,6 +349,20 @@ function App() {
       case 'profit':
         return <ProfitOverview history={history} />
       case 'advisory':
+        // Feature 2: Check advisory access permission
+        if (!profile?.can_access_advisory && profile?.role !== 'admin') {
+          return (
+            <Center mt={10}>
+              <Alert status="info" variant="subtle" flexDir="column" alignItems="center" justifyContent="center" textAlign="center" height="200px" rounded="2xl" maxW="md" shadow="xl">
+                <AlertIcon boxSize="40px" mr={0} />
+                <Box mt={4} fontWeight="bold">
+                  投顧追蹤功能尚未開通
+                </Box>
+                <Box mt={2}>請聯繫管理員開啟此功能的使用權限。</Box>
+              </Alert>
+            </Center>
+          )
+        }
         return (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }}>
             <SimpleGrid columns={{ base: 1, lg: 3 }} spacing={6} mb={6}>
@@ -459,14 +531,34 @@ function App() {
       <Navbar
         userEmail={session.user.email}
         role={profile?.role}
+        canAccessAdvisory={profile?.can_access_advisory || false}
+        hasAnnouncement={!!announcement}
         currentPage={currentPage}
         onNavigate={(page) => setCurrentPage(page)}
+        onOpenAnnouncement={onAnnouncementOpen}
       />
       <Container maxW="container.xl" py={12}>
         <AnimatePresence mode="wait">
           {renderContent()}
         </AnimatePresence>
       </Container>
+
+      {/* Feature 1: Announcement Modal */}
+      <AnnouncementModal
+        isOpen={isAnnouncementOpen}
+        onClose={handleAnnouncementClose}
+        announcement={announcement}
+      />
+
+      {/* Feature 3: Personal Info Modal (first-time login) */}
+      {session && showPersonalInfo && (
+        <PersonalInfoModal
+          isOpen={showPersonalInfo}
+          onClose={() => setShowPersonalInfo(false)}
+          userId={session.user.id}
+          userEmail={session.user.email || ''}
+        />
+      )}
     </Box>
   )
 }

@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     # --- CORS ---
     FRONTEND_URL: str = "http://localhost:5173"
 
+    # --- SMTP Email (for admin registration notifications) ---
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 465
+    SMTP_USER: str = ""
+    SMTP_PASS: str = ""
+    SMTP_FROM_NAME: str = "Stock Dango"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
