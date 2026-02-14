@@ -167,6 +167,8 @@ function App() {
   }
 
   // --- Feature 1: Fetch latest active announcement ---
+  // Shows on every login / page load while the announcement is active.
+  // Admin can disable the announcement to stop it from appearing.
   const fetchAnnouncement = async () => {
     const { data } = await supabase
       .from('announcements')
@@ -178,18 +180,13 @@ function App() {
 
     if (data) {
       setAnnouncement(data)
-      // Auto-show on login (only once per session)
-      const dismissedId = sessionStorage.getItem('dismissed_announcement')
-      if (dismissedId !== data.id) {
-        onAnnouncementOpen()
-      }
+      onAnnouncementOpen()
+    } else {
+      setAnnouncement(null)
     }
   }
 
   const handleAnnouncementClose = () => {
-    if (announcement) {
-      sessionStorage.setItem('dismissed_announcement', announcement.id)
-    }
     onAnnouncementClose()
   }
 

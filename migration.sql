@@ -149,6 +149,38 @@ CREATE POLICY "Admins can delete email config"
   );
 
 
+-- ─── 4. Fix: New user default status = 'pending' ─────────────────
+-- Ensure the user_profiles column default is 'pending', not 'enabled'
+ALTER TABLE user_profiles ALTER COLUMN status SET DEFAULT 'pending';
+
+-- Recreate the trigger function so new sign-ups get status='pending'
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO public.user_profiles (id, email, role, status, can_access_advisory)
+  VALUES (
+    NEW.id,
+    COALESCE(NEW.email, ''),
+    'user',
+    'pending',
+    false
+  );
+  RETURN NEW;
+END;
+$$;
+
+-- Ensure the trigger exists on auth.users
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW
+  EXECUTE FUNCTION public.handle_new_user();
+
+
 -- ─── Done ───────────────────────────────────────────────────────
 -- After running this migration, remember to:
 -- 1. Set SMTP env vars in Railway (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS)
