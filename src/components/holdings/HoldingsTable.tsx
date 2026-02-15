@@ -415,6 +415,8 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
     }
   }
 
+  const PRESET_SIZES = [10, 20, 100]
+  const isCustomSize = !PRESET_SIZES.includes(pageSize)
   const COL_COUNT = 12 // Updated from 10
 
   return (
@@ -477,14 +479,14 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
               <Select
                 size="sm"
                 w="auto"
-                value={showCustomInput ? 'custom' : String(pageSize)}
+                value={(showCustomInput || isCustomSize) ? 'custom' : String(pageSize)}
                 onChange={(e) => handlePageSizeChange(e.target.value)}
                 rounded="md"
               >
                 <option value="10">10</option>
                 <option value="20">20</option>
                 <option value="100">100</option>
-                <option value="custom">自訂</option>
+                <option value="custom">{isCustomSize && !showCustomInput ? `自訂 (${pageSize})` : '自訂'}</option>
               </Select>
               {showCustomInput && (
                 <HStack spacing={1}>
