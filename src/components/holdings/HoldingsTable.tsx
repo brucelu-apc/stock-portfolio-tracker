@@ -16,8 +16,25 @@ import {
   VStack,
   useToast,
   Skeleton,
+  Select,
+  Input,
+  Flex,
+  Button,
+  Tooltip,
 } from '@chakra-ui/react'
-import { EditIcon, DeleteIcon, ChevronDownIcon, ChevronUpIcon, TriangleUpIcon, TriangleDownIcon, UpDownIcon } from '@chakra-ui/icons'
+import {
+  EditIcon,
+  DeleteIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  TriangleUpIcon,
+  TriangleDownIcon,
+  UpDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  ArrowLeftIcon,
+  ArrowRightIcon,
+} from '@chakra-ui/icons'
 import { MouseEvent, useState, useMemo } from 'react'
 import { AggregatedHolding, aggregateHoldings, calculateTPSL, Holding } from '../../utils/calculations'
 import { supabase } from '../../services/supabase'
@@ -31,7 +48,12 @@ interface Props {
   isLoading?: boolean
 }
 
-type SortField = 'ticker' | 'name' | 'totalShares' | 'avgCost' | 'currentPrice' | 'changePercent' | 'marketValue' | 'unrealizedPnl'
+// Updated sort fields: added closePrice, closeChangePct, realtimePrice, realtimeChangePct
+type SortField =
+  | 'ticker' | 'name' | 'totalShares' | 'avgCost'
+  | 'realtimePrice' | 'realtimeChangePct'
+  | 'closePrice' | 'closeChangePct'
+  | 'marketValue' | 'unrealizedPnl'
 type SortOrder = 'asc' | 'desc' | null
 
 interface SortConfig {
@@ -52,7 +74,6 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
 
   const isProfit = group.unrealizedPnl > 0.001
   const isLoss = group.unrealizedPnl < -0.001
-  const isPnlFlat = !isProfit && !isLoss
   const latestItem = group.items[0]
 
   // Logic 1: Weighted Avg Price Color
@@ -65,26 +86,35 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
     return 'black'
   }
 
-  // Logic 2: Current Price Color & Placeholder
-  const hasPriceData = !!marketData[group.ticker]?.current_price
-  const currentPrice = marketData[group.ticker]?.current_price
-  const prevClose = marketData[group.ticker]?.prev_close
-  
-  // 使用誤差範圍處理浮點數比較，判斷是否為平盤
-  const isFlat = hasPriceData && Math.abs(currentPrice - prevClose) < 0.0001
-  const isPriceUp = hasPriceData && !isFlat && currentPrice > prevClose
-  const isPriceDown = hasPriceData && !isFlat && currentPrice < prevClose
-  
-  const getPriceColor = () => {
-    if (!hasPriceData) return 'black'
-    if (isPriceUp) return 'red.500'
-    if (isPriceDown) return 'green.500'
+  // --- Realtime price logic ---
+  const hasRealtimePrice = group.realtimePrice !== null && group.realtimePrice !== undefined
+  const realtimePriceUp = hasRealtimePrice && group.realtimeChangePct !== null && group.realtimeChangePct > 0.001
+  const realtimePriceDown = hasRealtimePrice && group.realtimeChangePct !== null && group.realtimeChangePct < -0.001
+
+  const getRealtimePriceColor = () => {
+    if (!hasRealtimePrice) return 'gray.400'
+    if (realtimePriceUp) return 'red.500'
+    if (realtimePriceDown) return 'green.500'
     return 'black'
   }
 
-  const getPriceSymbol = () => {
-    if (isPriceUp) return <TriangleUpIcon mr={1} />
-    if (isPriceDown) return <TriangleDownIcon mr={1} />
+  // --- Close price logic ---
+  const hasPriceData = !!marketData[group.ticker]?.current_price
+  const prevClose = marketData[group.ticker]?.prev_close
+  const isCloseFlat = hasPriceData && Math.abs(group.closeChangePct) < 0.001
+  const isCloseUp = hasPriceData && !isCloseFlat && group.closeChangePct > 0
+  const isCloseDown = hasPriceData && !isCloseFlat && group.closeChangePct < 0
+
+  const getClosePriceColor = () => {
+    if (!hasPriceData) return 'black'
+    if (isCloseUp) return 'red.500'
+    if (isCloseDown) return 'green.500'
+    return 'black'
+  }
+
+  const getCloseSymbol = () => {
+    if (isCloseUp) return <TriangleUpIcon mr={1} />
+    if (isCloseDown) return <TriangleDownIcon mr={1} />
     return null
   }
 
@@ -111,27 +141,53 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
         <Td isNumeric color={getAvgCostColor()} fontWeight="medium">
           {group.region === 'US' ? '$' : ''}{group.avgCost.toFixed(2)}
         </Td>
-        
-        {/* Latest Price Column */}
-        <Td isNumeric fontWeight="bold" color={getPriceColor()}>
+
+        {/* 即時股價 (Realtime Price) */}
+        <Td isNumeric fontWeight="bold" color={getRealtimePriceColor()}>
           <HStack justify="flex-end" spacing={0}>
-            {hasPriceData && getPriceSymbol()}
+            {hasRealtimePrice && realtimePriceUp && <TriangleUpIcon mr={1} />}
+            {hasRealtimePrice && realtimePriceDown && <TriangleDownIcon mr={1} />}
             <Text>
-              {hasPriceData ? `${group.region === 'US' ? '$' : ''}${group.currentPrice.toFixed(2)}` : '-'}
+              {hasRealtimePrice
+                ? `${group.region === 'US' ? '$' : ''}${group.realtimePrice!.toFixed(2)}`
+                : '休市'}
             </Text>
           </HStack>
         </Td>
+
+        {/* 即時漲跌幅 (Realtime Change %) */}
+        <Td isNumeric>
+          {hasRealtimePrice && group.realtimeChangePct !== null ? (
+            <HStack justify="flex-end" spacing={1} color={realtimePriceUp ? 'red.500' : realtimePriceDown ? 'green.500' : 'black'}>
+              {realtimePriceUp && <TriangleUpIcon />}
+              {realtimePriceDown && <TriangleDownIcon />}
+              <Text fontWeight="bold">
+                {realtimePriceUp ? '+' : ''}{group.realtimeChangePct.toFixed(2)}%
+              </Text>
+            </HStack>
+          ) : (
+            <Text color="gray.400">-</Text>
+          )}
+        </Td>
+
+        {/* 最新收盤價 (Close Price) — renamed from 最新股價 */}
+        <Td isNumeric fontWeight="bold" color={getClosePriceColor()}>
+          <HStack justify="flex-end" spacing={0}>
+            {hasPriceData && getCloseSymbol()}
+            <Text>
+              {hasPriceData ? `${group.region === 'US' ? '$' : ''}${group.closePrice.toFixed(2)}` : '-'}
+            </Text>
+          </HStack>
+        </Td>
+
+        {/* 收盤漲跌幅 (Close Change %) — renamed from 漲跌 */}
         <Td isNumeric>
           {hasPriceData ? (
-            <HStack justify="flex-end" spacing={1} color={isPriceUp ? 'red.500' : isPriceDown ? 'green.500' : 'black'}>
-              {/* 漲跌數值前的符號：上漲用正三角，下跌用倒三角，平盤不顯示 */}
-              {isPriceUp && <TriangleUpIcon />}
-              {isPriceDown && <TriangleDownIcon />}
+            <HStack justify="flex-end" spacing={1} color={isCloseUp ? 'red.500' : isCloseDown ? 'green.500' : 'black'}>
+              {isCloseUp && <TriangleUpIcon />}
+              {isCloseDown && <TriangleDownIcon />}
               <Text fontWeight="bold">
-                {Math.abs(group.change).toFixed(2)}
-              </Text>
-              <Text fontSize="xs">
-                ({isPriceUp ? '+' : (isPriceDown ? '-' : '')}{Math.abs(group.changePercent).toFixed(2)}%)
+                {isCloseUp ? '+' : ''}{group.closeChangePct.toFixed(2)}%
               </Text>
             </HStack>
           ) : '-'}
@@ -179,7 +235,7 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
 
       {group.isMultiple && (
         <Tr>
-          <Td colSpan={10} p={0} borderBottom={isOpen ? '1px solid' : 'none'} borderColor="gray.100">
+          <Td colSpan={12} p={0} borderBottom={isOpen ? '1px solid' : 'none'} borderColor="gray.100">
             <Collapse in={isOpen}>
               <Box p={4} bg="gray.50" fontSize="sm">
                 <Text fontWeight="bold" mb={2} color="gray.600">買入明細</Text>
@@ -222,20 +278,31 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
 
 export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }: Props) => {
   const [sortConfig, setSortConfig] = useState<SortConfig>({ field: 'marketValue', order: 'desc' })
-  
+
+  // --- Pagination state ---
+  const [pageSize, setPageSize] = useState<number>(10)
+  const [currentPageNum, setCurrentPageNum] = useState<number>(1)
+  const [customPageSize, setCustomPageSize] = useState<string>('')
+  const [showCustomInput, setShowCustomInput] = useState(false)
+
   const aggregatedData = useMemo(() => {
     const data = aggregateHoldings(holdings, marketData)
-    
+
     if (!sortConfig.order) return data
 
     return [...data].sort((a, b) => {
-      let aVal: any = a[sortConfig.field]
-      let bVal: any = b[sortConfig.field]
+      const aVal: any = a[sortConfig.field]
+      const bVal: any = b[sortConfig.field]
+
+      // Handle null for realtime fields
+      if (aVal === null && bVal === null) return 0
+      if (aVal === null) return sortConfig.order === 'asc' ? -1 : 1
+      if (bVal === null) return sortConfig.order === 'asc' ? 1 : -1
 
       // Handle specific fields if needed
       if (sortConfig.field === 'ticker') {
-        return sortConfig.order === 'asc' 
-          ? aVal.localeCompare(bVal) 
+        return sortConfig.order === 'asc'
+          ? aVal.localeCompare(bVal)
           : bVal.localeCompare(aVal)
       }
 
@@ -253,6 +320,21 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
       }
     })
   }, [holdings, marketData, sortConfig])
+
+  // --- Pagination computed values ---
+  const totalItems = aggregatedData.length
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
+
+  // Clamp current page
+  const safePage = Math.min(currentPageNum, totalPages)
+  if (safePage !== currentPageNum) {
+    setCurrentPageNum(safePage)
+  }
+
+  const paginatedData = useMemo(() => {
+    const start = (safePage - 1) * pageSize
+    return aggregatedData.slice(start, start + pageSize)
+  }, [aggregatedData, safePage, pageSize])
 
   const toast = useToast()
   const [editHolding, setEditHolding] = useState<Holding | null>(null)
@@ -284,14 +366,14 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
     if (sortConfig.field !== field || !sortConfig.order) {
       return <UpDownIcon ml={1} color="gray.300" boxSize={3} />
     }
-    return sortConfig.order === 'asc' 
-      ? <ChevronUpIcon ml={1} color="blue.500" /> 
+    return sortConfig.order === 'asc'
+      ? <ChevronUpIcon ml={1} color="blue.500" />
       : <ChevronDownIcon ml={1} color="blue.500" />
   }
 
   const SortableTh = ({ field, children, isNumeric = false }: { field: SortField, children: React.ReactNode, isNumeric?: boolean }) => (
-    <Th 
-      cursor="pointer" 
+    <Th
+      cursor="pointer"
       onClick={() => requestSort(field)}
       _hover={{ bg: 'gray.100' }}
       isNumeric={isNumeric}
@@ -304,18 +386,51 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
     </Th>
   )
 
+  // --- Pagination handlers ---
+  const handlePageSizeChange = (value: string) => {
+    if (value === 'custom') {
+      setShowCustomInput(true)
+      return
+    }
+    setShowCustomInput(false)
+    const size = parseInt(value, 10)
+    if (!isNaN(size) && size > 0) {
+      setPageSize(size)
+      setCurrentPageNum(1)
+    }
+  }
+
+  const handleCustomPageSizeSubmit = () => {
+    const size = parseInt(customPageSize, 10)
+    if (!isNaN(size) && size >= 5 && size <= 200) {
+      setPageSize(size)
+      setCurrentPageNum(1)
+      setShowCustomInput(false)
+    } else {
+      toast({
+        title: '請輸入 5-200 之間的數字',
+        status: 'warning',
+        duration: 2000,
+      })
+    }
+  }
+
+  const COL_COUNT = 12 // Updated from 10
+
   return (
     <>
       <TableContainer bg="white" rounded="lg" shadow="sm" border="1px" borderColor="gray.100">
-        <Table variant="simple">
+        <Table variant="simple" size="sm">
           <Thead bg="gray.50">
             <Tr>
               <SortableTh field="ticker">代碼/地區</SortableTh>
               <SortableTh field="name">名稱</SortableTh>
               <SortableTh field="totalShares" isNumeric>總股數</SortableTh>
               <SortableTh field="avgCost" isNumeric>加權均價</SortableTh>
-              <SortableTh field="currentPrice" isNumeric>最新股價</SortableTh>
-              <SortableTh field="changePercent" isNumeric>漲跌</SortableTh>
+              <SortableTh field="realtimePrice" isNumeric>即時股價</SortableTh>
+              <SortableTh field="realtimeChangePct" isNumeric>即時漲跌幅</SortableTh>
+              <SortableTh field="closePrice" isNumeric>最新收盤價</SortableTh>
+              <SortableTh field="closeChangePct" isNumeric>收盤漲跌幅</SortableTh>
               <SortableTh field="marketValue" isNumeric>市值 (TWD)</SortableTh>
               <SortableTh field="unrealizedPnl" isNumeric>總損益</SortableTh>
               <Th isNumeric>停利/損</Th>
@@ -326,26 +441,21 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
             {isLoading ? (
               [...Array(3)].map((_, i) => (
                 <Tr key={i}>
-                  <Td><Skeleton h="20px" /></Td>
-                  <Td><Skeleton h="20px" /></Td>
-                  <Td><Skeleton h="20px" /></Td>
-                  <Td><Skeleton h="20px" /></Td>
-                  <Td><Skeleton h="20px" /></Td>
-                  <Td><Skeleton h="20px" /></Td>
-                  <Td><Skeleton h="20px" /></Td>
-                  <Td><Skeleton h="20px" /></Td>
-                  <Td><Skeleton h="20px" /></Td>
-                  <Td><Skeleton h="20px" /></Td>
+                  {[...Array(COL_COUNT)].map((_, j) => (
+                    <Td key={j}><Skeleton h="20px" /></Td>
+                  ))}
                 </Tr>
               ))
-            ) : aggregatedData.length === 0 ? (
+            ) : paginatedData.length === 0 ? (
               <Tr>
-                <Td colSpan={10} textAlign="center" py={10}>
-                  目前沒有持股，請點擊「新增持股」按鈕。
+                <Td colSpan={COL_COUNT} textAlign="center" py={10}>
+                  {totalItems === 0
+                    ? '目前沒有持股，請點擊「新增持股」按鈕。'
+                    : '此頁無資料。'}
                 </Td>
               </Tr>
             ) : (
-              aggregatedData.map((group) => (
+              paginatedData.map((group) => (
                 <HoldingRow
                   key={group.ticker}
                   group={group}
@@ -357,13 +467,106 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
             )}
           </Tbody>
         </Table>
+
+        {/* ── Pagination Controls ── */}
+        {!isLoading && totalItems > 0 && (
+          <Flex justify="space-between" align="center" px={4} py={3} borderTop="1px" borderColor="gray.100" flexWrap="wrap" gap={2}>
+            {/* Left: page size selector */}
+            <HStack spacing={2}>
+              <Text fontSize="sm" color="gray.600" whiteSpace="nowrap">每頁顯示:</Text>
+              <Select
+                size="sm"
+                w="auto"
+                value={showCustomInput ? 'custom' : String(pageSize)}
+                onChange={(e) => handlePageSizeChange(e.target.value)}
+                rounded="md"
+              >
+                <option value="10">10</option>
+                <option value="20">20</option>
+                <option value="100">100</option>
+                <option value="custom">自訂</option>
+              </Select>
+              {showCustomInput && (
+                <HStack spacing={1}>
+                  <Input
+                    size="sm"
+                    w="70px"
+                    type="number"
+                    min={5}
+                    max={200}
+                    placeholder="5-200"
+                    value={customPageSize}
+                    onChange={(e) => setCustomPageSize(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleCustomPageSizeSubmit()}
+                    rounded="md"
+                  />
+                  <Button size="sm" onClick={handleCustomPageSizeSubmit} colorScheme="blue" variant="outline" rounded="md">
+                    確定
+                  </Button>
+                </HStack>
+              )}
+              <Text fontSize="sm" color="gray.500">
+                共 {totalItems} 筆
+              </Text>
+            </HStack>
+
+            {/* Right: page navigation */}
+            {totalPages > 1 && (
+              <HStack spacing={1}>
+                <Tooltip label="第一頁">
+                  <IconButton
+                    aria-label="First page"
+                    icon={<ArrowLeftIcon boxSize={3} />}
+                    size="sm"
+                    variant="ghost"
+                    isDisabled={safePage <= 1}
+                    onClick={() => setCurrentPageNum(1)}
+                  />
+                </Tooltip>
+                <Tooltip label="上一頁">
+                  <IconButton
+                    aria-label="Previous page"
+                    icon={<ChevronLeftIcon />}
+                    size="sm"
+                    variant="ghost"
+                    isDisabled={safePage <= 1}
+                    onClick={() => setCurrentPageNum(safePage - 1)}
+                  />
+                </Tooltip>
+                <Text fontSize="sm" color="gray.700" px={2} whiteSpace="nowrap">
+                  {safePage} / {totalPages}
+                </Text>
+                <Tooltip label="下一頁">
+                  <IconButton
+                    aria-label="Next page"
+                    icon={<ChevronRightIcon />}
+                    size="sm"
+                    variant="ghost"
+                    isDisabled={safePage >= totalPages}
+                    onClick={() => setCurrentPageNum(safePage + 1)}
+                  />
+                </Tooltip>
+                <Tooltip label="最後一頁">
+                  <IconButton
+                    aria-label="Last page"
+                    icon={<ArrowRightIcon boxSize={3} />}
+                    size="sm"
+                    variant="ghost"
+                    isDisabled={safePage >= totalPages}
+                    onClick={() => setCurrentPageNum(totalPages)}
+                  />
+                </Tooltip>
+              </HStack>
+            )}
+          </Flex>
+        )}
       </TableContainer>
 
-      <EditHoldingModal 
-        isOpen={isOpen} 
-        onClose={onClose} 
-        holding={editHolding} 
-        onSuccess={onDataChange || (() => {})} 
+      <EditHoldingModal
+        isOpen={isOpen}
+        onClose={onClose}
+        holding={editHolding}
+        onSuccess={onDataChange || (() => {})}
       />
 
       <SellHoldingModal

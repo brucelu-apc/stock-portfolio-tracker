@@ -167,8 +167,8 @@ function App() {
   }
 
   // --- Feature 1: Fetch latest active announcement ---
-  // Shows on every login / page load while the announcement is active.
-  // Admin can disable the announcement to stop it from appearing.
+  // Shows once per day (first login). Reappears after midnight 00:00.
+  // Uses localStorage key: announcement_dismissed_{id}_{YYYY-MM-DD}
   const fetchAnnouncement = async () => {
     const { data } = await supabase
       .from('announcements')
@@ -180,13 +180,31 @@ function App() {
 
     if (data) {
       setAnnouncement(data)
-      onAnnouncementOpen()
+      // Check if already dismissed today
+      const today = new Date().toISOString().split('T')[0] // YYYY-MM-DD
+      const dismissKey = `announcement_dismissed_${data.id}_${today}`
+      if (!localStorage.getItem(dismissKey)) {
+        onAnnouncementOpen()
+      }
     } else {
       setAnnouncement(null)
     }
   }
 
   const handleAnnouncementClose = () => {
+    // Mark as dismissed for today
+    if (announcement) {
+      const today = new Date().toISOString().split('T')[0]
+      const dismissKey = `announcement_dismissed_${announcement.id}_${today}`
+      localStorage.setItem(dismissKey, '1')
+      // Clean up old date keys (keep only today's)
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i)
+        if (key && key.startsWith('announcement_dismissed_') && !key.endsWith(today)) {
+          localStorage.removeItem(key)
+        }
+      }
+    }
     onAnnouncementClose()
   }
 

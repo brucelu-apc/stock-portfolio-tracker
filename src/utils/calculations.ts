@@ -28,6 +28,11 @@ export interface AggregatedHolding {
   prevClose: number
   change: number
   changePercent: number
+  // New: separated realtime vs close price columns
+  realtimePrice: number | null    // 即時股價 (from twstock, null when market closed)
+  realtimeChangePct: number | null // 即時漲跌幅
+  closePrice: number              // 最新收盤價 (from yfinance)
+  closeChangePct: number          // 收盤漲跌幅
   marketValue: number
   unrealizedPnl: number
   roi: number
@@ -63,12 +68,20 @@ export const aggregateHoldings = (holdings: Holding[], marketData: { [ticker: st
     const currentPrice = mData.current_price || avgCost
     const prevClose = mData.prev_close || currentPrice
     const sector = mData.sector || "Unknown" // Get sector
-    
+
     const change = currentPrice - prevClose
     const changePercent = prevClose !== 0 ? (change / prevClose) * 100 : 0
 
+    // New: separated realtime vs close prices
+    const realtimePrice: number | null = mData.realtime_price ?? null
+    const closePrice: number = mData.close_price ?? mData.current_price ?? avgCost
+    const closeChangePct = prevClose !== 0 ? ((closePrice - prevClose) / prevClose) * 100 : 0
+    const realtimeChangePct = (realtimePrice !== null && prevClose !== 0)
+      ? ((realtimePrice - prevClose) / prevClose) * 100
+      : null
+
     const fxRate = latest.region === 'US' ? (marketData['USDTWD']?.current_price || 32.5) : 1
-    
+
     // Values in TWD for summary consistency
     const totalCostTWD = totalCost * fxRate
     const marketValueTWD = (currentPrice * totalShares) * fxRate
@@ -88,6 +101,10 @@ export const aggregateHoldings = (holdings: Holding[], marketData: { [ticker: st
       prevClose,
       change,
       changePercent,
+      realtimePrice,
+      realtimeChangePct,
+      closePrice,
+      closeChangePct,
       marketValue: marketValueTWD,
       unrealizedPnl: unrealizedPnlTWD,
       roi,
