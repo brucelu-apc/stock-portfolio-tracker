@@ -75,9 +75,11 @@ async def fetch_close_prices(
     logger.info(f"yfinance: downloading {len(all_query_tickers)} tickers...")
 
     try:
+        # Use period="5d" to always get the last trading day's close,
+        # even on weekends/holidays when "1d" would return empty.
         data = yf.download(
             all_query_tickers,
-            period="1d",
+            period="5d",
             group_by='ticker',
             progress=False
         )
@@ -133,10 +135,16 @@ async def fetch_close_prices(
 
             close_price = float(close_price)
 
-            # Try to get prev_close and sector from ticker info
+            # Try to get prev_close from 5d data (second-to-last trading day)
             prev_close = close_price
+            if len(ticker_data) >= 2:
+                pc_from_data = ticker_data['Close'].iloc[-2]
+                if is_valid_number(pc_from_data):
+                    prev_close = float(pc_from_data)
+
             sector = existing_sectors.get(original_ticker, "Unknown")
 
+            # Fallback: try ticker.info for prev_close and sector
             try:
                 ticker_obj = yf.Ticker(query_ticker)
                 info = ticker_obj.info
@@ -178,7 +186,7 @@ async def fetch_exchange_rate() -> Optional[dict]:
 
     try:
         twd_fx = yf.Ticker("TWD=X")
-        fx_data = twd_fx.history(period="1d")
+        fx_data = twd_fx.history(period="5d")
         if not fx_data.empty:
             current_fx = fx_data['Close'].iloc[-1]
             prev_fx = fx_data['Open'].iloc[-1]

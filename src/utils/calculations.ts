@@ -73,8 +73,9 @@ export const aggregateHoldings = (holdings: Holding[], marketData: { [ticker: st
     const changePercent = prevClose !== 0 ? (change / prevClose) * 100 : 0
 
     // New: separated realtime vs close prices
-    const realtimePrice: number | null = mData.realtime_price ?? null
-    const closePrice: number = mData.close_price ?? mData.current_price ?? avgCost
+    // Use || instead of ?? so that 0 or falsy values also fallback
+    const realtimePrice: number | null = mData.realtime_price || null
+    const closePrice: number = mData.close_price || mData.current_price || avgCost
     const closeChangePct = prevClose !== 0 ? ((closePrice - prevClose) / prevClose) * 100 : 0
     const realtimeChangePct = (realtimePrice !== null && prevClose !== 0)
       ? ((realtimePrice - prevClose) / prevClose) * 100

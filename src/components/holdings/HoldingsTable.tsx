@@ -99,14 +99,14 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
   }
 
   // --- Close price logic ---
-  const hasPriceData = !!marketData[group.ticker]?.current_price
-  const prevClose = marketData[group.ticker]?.prev_close
-  const isCloseFlat = hasPriceData && Math.abs(group.closeChangePct) < 0.001
-  const isCloseUp = hasPriceData && !isCloseFlat && group.closeChangePct > 0
-  const isCloseDown = hasPriceData && !isCloseFlat && group.closeChangePct < 0
+  // Use closePrice from aggregated data (already has fallback chain: close_price → current_price → avgCost)
+  const hasCloseData = group.closePrice > 0
+  const isCloseFlat = hasCloseData && Math.abs(group.closeChangePct) < 0.001
+  const isCloseUp = hasCloseData && !isCloseFlat && group.closeChangePct > 0
+  const isCloseDown = hasCloseData && !isCloseFlat && group.closeChangePct < 0
 
   const getClosePriceColor = () => {
-    if (!hasPriceData) return 'black'
+    if (!hasCloseData) return 'black'
     if (isCloseUp) return 'red.500'
     if (isCloseDown) return 'green.500'
     return 'black'
@@ -173,16 +173,16 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
         {/* 最新收盤價 (Close Price) — renamed from 最新股價 */}
         <Td isNumeric fontWeight="bold" color={getClosePriceColor()}>
           <HStack justify="flex-end" spacing={0}>
-            {hasPriceData && getCloseSymbol()}
+            {hasCloseData && getCloseSymbol()}
             <Text>
-              {hasPriceData ? `${group.region === 'US' ? '$' : ''}${group.closePrice.toFixed(2)}` : '-'}
+              {hasCloseData ? `${group.region === 'US' ? '$' : ''}${group.closePrice.toFixed(2)}` : '-'}
             </Text>
           </HStack>
         </Td>
 
         {/* 收盤漲跌幅 (Close Change %) — renamed from 漲跌 */}
         <Td isNumeric>
-          {hasPriceData ? (
+          {hasCloseData ? (
             <HStack justify="flex-end" spacing={1} color={isCloseUp ? 'red.500' : isCloseDown ? 'green.500' : 'black'}>
               {isCloseUp && <TriangleUpIcon />}
               {isCloseDown && <TriangleDownIcon />}
