@@ -168,6 +168,8 @@ async def daily_us_close():
                 "ticker": "USDTWD",
                 "region": "FX",
                 "current_price": fx['current_price'],
+                "close_price": fx['current_price'],
+                "realtime_price": None,
                 "prev_close": fx['prev_close'],
                 "sector": "Forex",
                 "update_source": "yfinance",
@@ -245,6 +247,7 @@ async def _update_market_data_batch(
                 "ticker": ticker,
                 "region": "TPE",
                 "current_price": data['current_price'],
+                "realtime_price": data['current_price'],  # twstock = realtime
                 "update_source": source,
                 "updated_at": datetime.now(TST).isoformat(),
             }
@@ -268,12 +271,14 @@ async def _update_single_market_data(
     data: dict,
     source: str = 'yfinance'
 ):
-    """Update a single ticker in market_data."""
+    """Update a single ticker in market_data (yfinance close prices)."""
     try:
         upsert_data = {
             "ticker": ticker,
             "region": data.get('region', 'TPE'),
             "current_price": data['current_price'],
+            "close_price": data['current_price'],  # yfinance = official close
+            "realtime_price": None,                 # Clear realtime (market closed)
             "prev_close": data.get('prev_close'),
             "sector": data.get('sector', 'Unknown'),
             "update_source": source,
