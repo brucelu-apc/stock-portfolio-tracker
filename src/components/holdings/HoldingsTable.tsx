@@ -48,7 +48,7 @@ interface Props {
   isLoading?: boolean
 }
 
-// Updated sort fields: added closePrice, closeChangePct, realtimePrice, realtimeChangePct
+// Sort fields including new change point fields
 type SortField =
   | 'ticker' | 'name' | 'totalShares' | 'avgCost'
   | 'realtimePrice' | 'realtimeChangePct'
@@ -76,9 +76,7 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
   const isLoss = group.unrealizedPnl < -0.001
   const latestItem = group.items[0]
 
-  // Logic 1: Weighted Avg Price Color
-  // 紅色：加權均價 > 最新股價 (套牢)
-  // 綠色：加權均價 < 最新股價 (獲利/有優勢)
+  // Weighted Avg Price Color
   const getAvgCostColor = () => {
     if (!marketData[group.ticker]?.current_price) return 'black'
     if (group.avgCost > group.currentPrice) return 'red.500'
@@ -99,7 +97,6 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
   }
 
   // --- Close price logic ---
-  // Use closePrice from aggregated data (already has fallback chain: close_price → current_price → avgCost)
   const hasCloseData = group.closePrice > 0
   const isCloseFlat = hasCloseData && Math.abs(group.closeChangePct) < 0.001
   const isCloseUp = hasCloseData && !isCloseFlat && group.closeChangePct > 0
@@ -116,6 +113,13 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
     if (isCloseUp) return <TriangleUpIcon mr={1} />
     if (isCloseDown) return <TriangleDownIcon mr={1} />
     return null
+  }
+
+  // Helper: format change points with sign
+  const formatChange = (val: number, isUS: boolean) => {
+    const prefix = val > 0 ? '+' : ''
+    const currency = isUS ? '$' : ''
+    return `${prefix}${currency}${val.toFixed(2)}`
   }
 
   return (
@@ -155,22 +159,31 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
           </HStack>
         </Td>
 
-        {/* 即時漲跌幅 (Realtime Change %) */}
+        {/* 即時漲跌幅 (Realtime Change: points + %) — stacked vertically */}
         <Td isNumeric>
-          {hasRealtimePrice && group.realtimeChangePct !== null ? (
-            <HStack justify="flex-end" spacing={1} color={realtimePriceUp ? 'red.500' : realtimePriceDown ? 'green.500' : 'black'}>
-              {realtimePriceUp && <TriangleUpIcon />}
-              {realtimePriceDown && <TriangleDownIcon />}
-              <Text fontWeight="bold">
-                {realtimePriceUp ? '+' : ''}{group.realtimeChangePct.toFixed(2)}%
+          {hasRealtimePrice && group.realtimeChange !== null && group.realtimeChangePct !== null ? (
+            <VStack
+              align="end"
+              spacing={0}
+              color={realtimePriceUp ? 'red.500' : realtimePriceDown ? 'green.500' : 'black'}
+            >
+              <HStack spacing={1} justify="flex-end">
+                {realtimePriceUp && <TriangleUpIcon boxSize={2.5} />}
+                {realtimePriceDown && <TriangleDownIcon boxSize={2.5} />}
+                <Text fontWeight="bold" fontSize="sm">
+                  {formatChange(group.realtimeChange, group.region === 'US')}
+                </Text>
+              </HStack>
+              <Text fontSize="xs">
+                {group.realtimeChangePct > 0 ? '+' : ''}{group.realtimeChangePct.toFixed(2)}%
               </Text>
-            </HStack>
+            </VStack>
           ) : (
             <Text color="gray.400">-</Text>
           )}
         </Td>
 
-        {/* 最新收盤價 (Close Price) — renamed from 最新股價 */}
+        {/* 最新收盤價 (Close Price) */}
         <Td isNumeric fontWeight="bold" color={getClosePriceColor()}>
           <HStack justify="flex-end" spacing={0}>
             {hasCloseData && getCloseSymbol()}
@@ -180,16 +193,25 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
           </HStack>
         </Td>
 
-        {/* 收盤漲跌幅 (Close Change %) — renamed from 漲跌 */}
+        {/* 收盤漲跌幅 (Close Change: points + %) — stacked vertically */}
         <Td isNumeric>
           {hasCloseData ? (
-            <HStack justify="flex-end" spacing={1} color={isCloseUp ? 'red.500' : isCloseDown ? 'green.500' : 'black'}>
-              {isCloseUp && <TriangleUpIcon />}
-              {isCloseDown && <TriangleDownIcon />}
-              <Text fontWeight="bold">
-                {isCloseUp ? '+' : ''}{group.closeChangePct.toFixed(2)}%
+            <VStack
+              align="end"
+              spacing={0}
+              color={isCloseUp ? 'red.500' : isCloseDown ? 'green.500' : 'black'}
+            >
+              <HStack spacing={1} justify="flex-end">
+                {isCloseUp && <TriangleUpIcon boxSize={2.5} />}
+                {isCloseDown && <TriangleDownIcon boxSize={2.5} />}
+                <Text fontWeight="bold" fontSize="sm">
+                  {formatChange(group.closeChange, group.region === 'US')}
+                </Text>
+              </HStack>
+              <Text fontSize="xs">
+                {group.closeChangePct > 0 ? '+' : ''}{group.closeChangePct.toFixed(2)}%
               </Text>
-            </HStack>
+            </VStack>
           ) : '-'}
         </Td>
 
@@ -299,7 +321,6 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
       if (aVal === null) return sortConfig.order === 'asc' ? -1 : 1
       if (bVal === null) return sortConfig.order === 'asc' ? 1 : -1
 
-      // Handle specific fields if needed
       if (sortConfig.field === 'ticker') {
         return sortConfig.order === 'asc'
           ? aVal.localeCompare(bVal)
@@ -417,7 +438,7 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
 
   const PRESET_SIZES = [10, 20, 100]
   const isCustomSize = !PRESET_SIZES.includes(pageSize)
-  const COL_COUNT = 12 // Updated from 10
+  const COL_COUNT = 12
 
   return (
     <>

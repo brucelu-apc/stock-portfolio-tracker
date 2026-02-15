@@ -20,7 +20,7 @@ export interface AggregatedHolding {
   ticker: string
   name: string
   region: string
-  sector: string // Added sector
+  sector: string
   totalShares: number
   avgCost: number
   totalCost: number
@@ -28,11 +28,13 @@ export interface AggregatedHolding {
   prevClose: number
   change: number
   changePercent: number
-  // New: separated realtime vs close price columns
-  realtimePrice: number | null    // 即時股價 (from twstock, null when market closed)
-  realtimeChangePct: number | null // 即時漲跌幅
-  closePrice: number              // 最新收盤價 (from yfinance)
-  closeChangePct: number          // 收盤漲跌幅
+  // Separated realtime vs close price columns
+  realtimePrice: number | null      // 即時股價 (from twstock, null when market closed)
+  realtimeChange: number | null     // 即時漲跌點數
+  realtimeChangePct: number | null  // 即時漲跌幅 %
+  closePrice: number                // 最新收盤價 (from yfinance)
+  closeChange: number               // 收盤漲跌點數
+  closeChangePct: number            // 收盤漲跌幅 %
   marketValue: number
   unrealizedPnl: number
   roi: number
@@ -47,17 +49,17 @@ export interface AggregatedHolding {
 
 export const aggregateHoldings = (holdings: Holding[], marketData: { [ticker: string]: any }): AggregatedHolding[] => {
   const groups: { [key: string]: Holding[] } = {}
-  
+
   holdings.forEach(h => {
     if (!groups[h.ticker]) groups[h.ticker] = []
     groups[h.ticker].push(h)
   })
 
   return Object.keys(groups).map(ticker => {
-    const items = groups[ticker].sort((a, b) => 
+    const items = groups[ticker].sort((a, b) =>
       new Date(b.buy_date).getTime() - new Date(a.buy_date).getTime()
     )
-    
+
     const latest = items[0]
     const totalShares = items.reduce((sum, item) => sum + item.shares, 0)
     const totalCost = items.reduce((sum, item) => sum + (item.shares * item.cost_price), 0)
@@ -67,16 +69,24 @@ export const aggregateHoldings = (holdings: Holding[], marketData: { [ticker: st
     const mData = marketData[ticker] || {}
     const currentPrice = mData.current_price || avgCost
     const prevClose = mData.prev_close || currentPrice
-    const sector = mData.sector || "Unknown" // Get sector
+    const sector = mData.sector || "Unknown"
 
     const change = currentPrice - prevClose
     const changePercent = prevClose !== 0 ? (change / prevClose) * 100 : 0
 
-    // New: separated realtime vs close prices
+    // Separated realtime vs close prices
     // Use || instead of ?? so that 0 or falsy values also fallback
     const realtimePrice: number | null = mData.realtime_price || null
     const closePrice: number = mData.close_price || mData.current_price || avgCost
+
+    // Close change: points & percentage
+    const closeChange = closePrice - prevClose
     const closeChangePct = prevClose !== 0 ? ((closePrice - prevClose) / prevClose) * 100 : 0
+
+    // Realtime change: points & percentage (null when no realtime data)
+    const realtimeChange = (realtimePrice !== null && prevClose !== 0)
+      ? (realtimePrice - prevClose)
+      : null
     const realtimeChangePct = (realtimePrice !== null && prevClose !== 0)
       ? ((realtimePrice - prevClose) / prevClose) * 100
       : null
@@ -103,8 +113,10 @@ export const aggregateHoldings = (holdings: Holding[], marketData: { [ticker: st
       change,
       changePercent,
       realtimePrice,
+      realtimeChange,
       realtimeChangePct,
       closePrice,
+      closeChange,
       closeChangePct,
       marketValue: marketValueTWD,
       unrealizedPnl: unrealizedPnlTWD,
@@ -131,7 +143,7 @@ export const calculateTPSL = (holding: AggregatedHolding) => {
   // Auto Trailing logic: MAX(Cost * 1.1, HighWatermark * 0.9)
   const baseTP = holding.avgCost * 1.1
   const trailingTP = (holding.highWatermark || holding.avgCost) * 0.9
-  
+
   return {
     tp: Math.max(baseTP, trailingTP),
     sl: holding.avgCost // Breakeven

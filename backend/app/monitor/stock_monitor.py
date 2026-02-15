@@ -174,7 +174,7 @@ async def daily_us_close():
                 "sector": "Forex",
                 "update_source": "yfinance",
                 "updated_at": datetime.now(TST).isoformat(),
-            }).execute()
+            }, on_conflict='ticker').execute()
             logger.info(f"USDTWD updated: {fx['current_price']}")
 
         # Update US stock prices
@@ -261,7 +261,9 @@ async def _update_market_data_batch(
             if data.get('volume'):
                 upsert_data["volume"] = data['volume']
 
-            _supabase.table("market_data").upsert(upsert_data).execute()
+            _supabase.table("market_data").upsert(
+                upsert_data, on_conflict='ticker'
+            ).execute()
         except Exception as e:
             logger.error(f"Failed to update market_data for {ticker}: {e}")
 
@@ -284,7 +286,9 @@ async def _update_single_market_data(
             "update_source": source,
             "updated_at": datetime.now(TST).isoformat(),
         }
-        _supabase.table("market_data").upsert(upsert_data).execute()
+        _supabase.table("market_data").upsert(
+            upsert_data, on_conflict='ticker'
+        ).execute()
     except Exception as e:
         logger.error(f"Failed to update {ticker}: {e}")
 

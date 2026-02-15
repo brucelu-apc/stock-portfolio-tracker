@@ -38,6 +38,10 @@ async def fetch_close_prices(
     """
     Fetch close prices for a batch of stocks via yfinance.
 
+    Uses period="5d" to ensure data is available even on weekends/holidays.
+    prev_close is derived ONLY from the 5d historical data (not ticker.info)
+    to ensure consistency between close_price and prev_close.
+
     Args:
         tickers: List of dicts with 'ticker' and 'region' keys
         supabase_client: Supabase client for DB updates
@@ -87,6 +91,10 @@ async def fetch_close_prices(
         logger.error(f"yfinance download failed: {e}")
         return results
 
+    if data is None or data.empty:
+        logger.warning("yfinance returned empty DataFrame")
+        return results
+
     # Get existing sectors
     existing_sectors: dict[str, str] = {}
     try:
@@ -128,33 +136,35 @@ async def fetch_close_prices(
                 logger.warning(f"No data for {original_ticker}")
                 continue
 
-            close_price = ticker_data['Close'].iloc[-1]
+            # Drop rows where Close is NaN to get only valid trading days
+            valid_data = ticker_data.dropna(subset=['Close'])
+            if valid_data.empty:
+                logger.warning(f"{original_ticker}: all Close values are NaN")
+                continue
+
+            close_price = float(valid_data['Close'].iloc[-1])
             if not is_valid_number(close_price):
                 logger.warning(f"{original_ticker} close is NaN")
                 continue
 
-            close_price = float(close_price)
-
-            # Try to get prev_close from 5d data (second-to-last trading day)
+            # prev_close: ONLY from 5d historical data (not ticker.info)
+            # This ensures consistency with close_price from the same data source.
             prev_close = close_price
-            if len(ticker_data) >= 2:
-                pc_from_data = ticker_data['Close'].iloc[-2]
+            if len(valid_data) >= 2:
+                pc_from_data = valid_data['Close'].iloc[-2]
                 if is_valid_number(pc_from_data):
                     prev_close = float(pc_from_data)
 
             sector = existing_sectors.get(original_ticker, "Unknown")
 
-            # Fallback: try ticker.info for prev_close and sector
-            try:
-                ticker_obj = yf.Ticker(query_ticker)
-                info = ticker_obj.info
-                pc = info.get('previousClose')
-                if is_valid_number(pc):
-                    prev_close = float(pc)
-                if sector == "Unknown":
+            # Use ticker.info ONLY for sector (not for prev_close)
+            if sector == "Unknown":
+                try:
+                    ticker_obj = yf.Ticker(query_ticker)
+                    info = ticker_obj.info
                     sector = info.get('sector', 'Unknown')
-            except Exception:
-                pass
+                except Exception:
+                    pass
 
             region = "TPE" if ".TW" in query_ticker or ".TWO" in query_ticker else "US"
 
@@ -164,6 +174,12 @@ async def fetch_close_prices(
                 'sector': sector,
                 'region': region,
             }
+
+            logger.info(
+                f"  {original_ticker}: close={close_price}, "
+                f"prev_close={prev_close}, "
+                f"data_rows={len(valid_data)}"
+            )
 
         except Exception as e:
             logger.error(f"Error processing {original_ticker}: {e}")
@@ -188,8 +204,18 @@ async def fetch_exchange_rate() -> Optional[dict]:
         twd_fx = yf.Ticker("TWD=X")
         fx_data = twd_fx.history(period="5d")
         if not fx_data.empty:
-            current_fx = fx_data['Close'].iloc[-1]
-            prev_fx = fx_data['Open'].iloc[-1]
+            valid_data = fx_data.dropna(subset=['Close'])
+            if valid_data.empty:
+                return None
+
+            current_fx = valid_data['Close'].iloc[-1]
+
+            # Get prev_close from 5d data
+            prev_fx = current_fx
+            if len(valid_data) >= 2:
+                pf = valid_data['Close'].iloc[-2]
+                if is_valid_number(pf):
+                    prev_fx = float(pf)
 
             if is_valid_number(current_fx):
                 return {
