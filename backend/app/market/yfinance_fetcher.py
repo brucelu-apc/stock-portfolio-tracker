@@ -8,9 +8,13 @@ Handles:
   - USDTWD exchange rate
   - High watermark updates
   - Sector info caching
+
+NOTE: Uses individual Ticker.history() instead of yf.download() to avoid
+Yahoo Finance rate-limiting on cloud servers (Railway, Heroku, AWS, etc.).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 from datetime import datetime
@@ -20,6 +24,9 @@ from zoneinfo import ZoneInfo
 logger = logging.getLogger(__name__)
 
 TST = ZoneInfo("Asia/Taipei")
+
+# Delay between individual ticker fetches (seconds) to avoid rate-limiting
+FETCH_DELAY = 0.8
 
 
 def is_valid_number(n) -> bool:
@@ -31,6 +38,29 @@ def is_valid_number(n) -> bool:
         return False
 
 
+def _fetch_single_ticker_history(query_ticker: str):
+    """
+    Fetch 5d history for a single ticker using yf.Ticker().history().
+
+    This is more reliable on cloud servers than yf.download() because
+    it makes individual requests instead of batch requests that trigger
+    Yahoo Finance's rate-limiting.
+
+    Returns a DataFrame or None.
+    """
+    import yfinance as yf
+
+    try:
+        ticker_obj = yf.Ticker(query_ticker)
+        hist = ticker_obj.history(period="5d")
+        if hist is not None and not hist.empty:
+            return hist
+    except Exception as e:
+        logger.warning(f"yfinance fetch failed for {query_ticker}: {e}")
+
+    return None
+
+
 async def fetch_close_prices(
     tickers: list[dict],
     supabase_client
@@ -38,9 +68,9 @@ async def fetch_close_prices(
     """
     Fetch close prices for a batch of stocks via yfinance.
 
-    Uses period="5d" to ensure data is available even on weekends/holidays.
-    prev_close is derived ONLY from the 5d historical data (not ticker.info)
-    to ensure consistency between close_price and prev_close.
+    Uses individual Ticker.history() calls with delays to avoid
+    rate-limiting on cloud servers. Falls back from .TW to .TWO
+    for Taiwan OTC stocks.
 
     Args:
         tickers: List of dicts with 'ticker' and 'region' keys
@@ -57,43 +87,22 @@ async def fetch_close_prices(
 
     results: dict[str, dict] = {}
 
-    # Build ticker map: yf_ticker -> original_ticker
-    ticker_map: dict[str, str] = {}
+    # Build ticker list: (yf_ticker, original_ticker, region)
+    ticker_list: list[tuple[str, str, str]] = []
     for item in tickers:
         ticker = item['ticker']
         region = item.get('region', 'TPE')
         if region == 'TPE':
-            ticker_map[f"{ticker}.TW"] = ticker
+            ticker_list.append((f"{ticker}.TW", ticker, 'TPE'))
         elif region == 'FX':
             continue  # Handled separately
         else:
-            ticker_map[ticker] = ticker
+            ticker_list.append((ticker, ticker, 'US'))
 
-    if not ticker_map:
+    if not ticker_list:
         return results
 
-    # Add .TWO variants for fallback
-    tw_variants = [t.replace(".TW", ".TWO") for t in ticker_map if t.endswith(".TW")]
-    all_query_tickers = list(set(list(ticker_map.keys()) + tw_variants))
-
-    logger.info(f"yfinance: downloading {len(all_query_tickers)} tickers...")
-
-    try:
-        # Use period="5d" to always get the last trading day's close,
-        # even on weekends/holidays when "1d" would return empty.
-        data = yf.download(
-            all_query_tickers,
-            period="5d",
-            group_by='ticker',
-            progress=False
-        )
-    except Exception as e:
-        logger.error(f"yfinance download failed: {e}")
-        return results
-
-    if data is None or data.empty:
-        logger.warning("yfinance returned empty DataFrame")
-        return results
+    logger.info(f"yfinance: fetching {len(ticker_list)} tickers one-by-one...")
 
     # Get existing sectors
     existing_sectors: dict[str, str] = {}
@@ -103,48 +112,43 @@ async def fetch_close_prices(
     except Exception:
         pass
 
-    multi_ticker = len(all_query_tickers) > 1
+    success_count = 0
+    fail_count = 0
 
-    for query_ticker, original_ticker in ticker_map.items():
+    for idx, (query_ticker, original_ticker, region) in enumerate(ticker_list):
         try:
-            ticker_data = data[query_ticker] if multi_ticker else data
+            # Add delay between requests (skip first)
+            if idx > 0:
+                await asyncio.sleep(FETCH_DELAY)
+
+            # Fetch history
+            ticker_data = _fetch_single_ticker_history(query_ticker)
 
             # .TW → .TWO fallback for Taiwan stocks
-            if query_ticker.endswith(".TW"):
-                is_empty = (ticker_data is None or ticker_data.empty)
-                has_nan = False
-                if not is_empty:
-                    try:
-                        has_nan = math.isnan(ticker_data['Close'].iloc[-1])
-                    except (IndexError, KeyError):
-                        is_empty = True
+            if ticker_data is None and query_ticker.endswith(".TW"):
+                alt_ticker = query_ticker.replace(".TW", ".TWO")
+                logger.info(f"Fallback: {query_ticker} → {alt_ticker}")
+                await asyncio.sleep(FETCH_DELAY)
+                ticker_data = _fetch_single_ticker_history(alt_ticker)
+                if ticker_data is not None:
+                    query_ticker = alt_ticker
 
-                if is_empty or has_nan:
-                    alt_ticker = query_ticker.replace(".TW", ".TWO")
-                    logger.info(f"Fallback: {query_ticker} → {alt_ticker}")
-                    try:
-                        alt_data = data[alt_ticker] if multi_ticker else data
-                        if alt_data is not None and not alt_data.empty:
-                            test_val = alt_data['Close'].iloc[-1]
-                            if is_valid_number(test_val):
-                                ticker_data = alt_data
-                                query_ticker = alt_ticker
-                    except (KeyError, IndexError):
-                        pass
-
-            if ticker_data is None or ticker_data.empty:
-                logger.warning(f"No data for {original_ticker}")
+            if ticker_data is None:
+                logger.warning(f"No data for {original_ticker} ({query_ticker})")
+                fail_count += 1
                 continue
 
             # Drop rows where Close is NaN to get only valid trading days
             valid_data = ticker_data.dropna(subset=['Close'])
             if valid_data.empty:
                 logger.warning(f"{original_ticker}: all Close values are NaN")
+                fail_count += 1
                 continue
 
             close_price = float(valid_data['Close'].iloc[-1])
             if not is_valid_number(close_price):
                 logger.warning(f"{original_ticker} close is NaN")
+                fail_count += 1
                 continue
 
             # prev_close: ONLY from 5d historical data (not ticker.info)
@@ -158,6 +162,7 @@ async def fetch_close_prices(
             sector = existing_sectors.get(original_ticker, "Unknown")
 
             # Use ticker.info ONLY for sector (not for prev_close)
+            # Skip on cloud to avoid extra API call that might get blocked
             if sector == "Unknown":
                 try:
                     ticker_obj = yf.Ticker(query_ticker)
@@ -166,8 +171,6 @@ async def fetch_close_prices(
                 except Exception:
                     pass
 
-            region = "TPE" if ".TW" in query_ticker or ".TWO" in query_ticker else "US"
-
             results[original_ticker] = {
                 'current_price': close_price,
                 'prev_close': prev_close,
@@ -175,16 +178,20 @@ async def fetch_close_prices(
                 'region': region,
             }
 
+            success_count += 1
             logger.info(
-                f"  {original_ticker}: close={close_price}, "
-                f"prev_close={prev_close}, "
-                f"data_rows={len(valid_data)}"
+                f"  [{success_count}/{len(ticker_list)}] {original_ticker}: "
+                f"close={close_price}, prev_close={prev_close}"
             )
 
         except Exception as e:
             logger.error(f"Error processing {original_ticker}: {e}")
+            fail_count += 1
 
-    logger.info(f"yfinance: fetched {len(results)}/{len(ticker_map)} prices")
+    logger.info(
+        f"yfinance: completed {success_count} OK, {fail_count} failed "
+        f"out of {len(ticker_list)} tickers"
+    )
     return results
 
 
