@@ -9,8 +9,8 @@ Handles:
   - High watermark updates
   - Sector info caching
 
-NOTE: Uses individual Ticker.history() instead of yf.download() to avoid
-Yahoo Finance rate-limiting on cloud servers (Railway, Heroku, AWS, etc.).
+NOTE: Uses a custom requests.Session with browser-like User-Agent
+to avoid Yahoo Finance blocking cloud server IPs (Railway, Heroku, AWS).
 """
 from __future__ import annotations
 
@@ -26,7 +26,34 @@ logger = logging.getLogger(__name__)
 TST = ZoneInfo("Asia/Taipei")
 
 # Delay between individual ticker fetches (seconds) to avoid rate-limiting
-FETCH_DELAY = 0.8
+FETCH_DELAY = 1.0
+
+# Browser-like User-Agent to avoid Yahoo Finance IP blocking
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
+
+
+def _create_yf_session():
+    """
+    Create a requests.Session with browser-like headers.
+
+    Yahoo Finance blocks requests from cloud server IPs when they use
+    the default python-requests User-Agent. By setting a browser-like
+    User-Agent, the requests appear to come from a normal browser.
+    """
+    import requests
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': USER_AGENT,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+    })
+    return session
 
 
 def is_valid_number(n) -> bool:
@@ -38,20 +65,19 @@ def is_valid_number(n) -> bool:
         return False
 
 
-def _fetch_single_ticker_history(query_ticker: str):
+def _fetch_single_ticker_history(query_ticker: str, session=None):
     """
     Fetch 5d history for a single ticker using yf.Ticker().history().
 
-    This is more reliable on cloud servers than yf.download() because
-    it makes individual requests instead of batch requests that trigger
-    Yahoo Finance's rate-limiting.
+    Uses a custom session with browser headers to bypass Yahoo Finance
+    cloud IP blocking.
 
     Returns a DataFrame or None.
     """
     import yfinance as yf
 
     try:
-        ticker_obj = yf.Ticker(query_ticker)
+        ticker_obj = yf.Ticker(query_ticker, session=session)
         hist = ticker_obj.history(period="5d")
         if hist is not None and not hist.empty:
             return hist
@@ -68,9 +94,9 @@ async def fetch_close_prices(
     """
     Fetch close prices for a batch of stocks via yfinance.
 
-    Uses individual Ticker.history() calls with delays to avoid
-    rate-limiting on cloud servers. Falls back from .TW to .TWO
-    for Taiwan OTC stocks.
+    Uses individual Ticker.history() calls with a custom browser-like
+    session to avoid Yahoo Finance blocking cloud server IPs.
+    Falls back from .TW to .TWO for Taiwan OTC stocks.
 
     Args:
         tickers: List of dicts with 'ticker' and 'region' keys
@@ -84,6 +110,12 @@ async def fetch_close_prices(
     except ImportError:
         logger.error("yfinance not installed. Run: pip install yfinance")
         return {}
+
+    # Set TZ cache to /tmp to avoid permission errors on Railway
+    try:
+        yf.set_tz_cache_location("/tmp/yfinance_tz_cache")
+    except Exception:
+        pass
 
     results: dict[str, dict] = {}
 
@@ -102,7 +134,10 @@ async def fetch_close_prices(
     if not ticker_list:
         return results
 
-    logger.info(f"yfinance: fetching {len(ticker_list)} tickers one-by-one...")
+    logger.info(f"yfinance: fetching {len(ticker_list)} tickers with browser session...")
+
+    # Create browser-like session
+    session = _create_yf_session()
 
     # Get existing sectors
     existing_sectors: dict[str, str] = {}
@@ -121,15 +156,15 @@ async def fetch_close_prices(
             if idx > 0:
                 await asyncio.sleep(FETCH_DELAY)
 
-            # Fetch history
-            ticker_data = _fetch_single_ticker_history(query_ticker)
+            # Fetch history with browser session
+            ticker_data = _fetch_single_ticker_history(query_ticker, session=session)
 
             # .TW → .TWO fallback for Taiwan stocks
             if ticker_data is None and query_ticker.endswith(".TW"):
                 alt_ticker = query_ticker.replace(".TW", ".TWO")
                 logger.info(f"Fallback: {query_ticker} → {alt_ticker}")
                 await asyncio.sleep(FETCH_DELAY)
-                ticker_data = _fetch_single_ticker_history(alt_ticker)
+                ticker_data = _fetch_single_ticker_history(alt_ticker, session=session)
                 if ticker_data is not None:
                     query_ticker = alt_ticker
 
@@ -152,7 +187,6 @@ async def fetch_close_prices(
                 continue
 
             # prev_close: ONLY from 5d historical data (not ticker.info)
-            # This ensures consistency with close_price from the same data source.
             prev_close = close_price
             if len(valid_data) >= 2:
                 pc_from_data = valid_data['Close'].iloc[-2]
@@ -162,10 +196,9 @@ async def fetch_close_prices(
             sector = existing_sectors.get(original_ticker, "Unknown")
 
             # Use ticker.info ONLY for sector (not for prev_close)
-            # Skip on cloud to avoid extra API call that might get blocked
             if sector == "Unknown":
                 try:
-                    ticker_obj = yf.Ticker(query_ticker)
+                    ticker_obj = yf.Ticker(query_ticker, session=session)
                     info = ticker_obj.info
                     sector = info.get('sector', 'Unknown')
                 except Exception:
@@ -207,8 +240,15 @@ async def fetch_exchange_rate() -> Optional[dict]:
     except ImportError:
         return None
 
+    # Set TZ cache to /tmp
     try:
-        twd_fx = yf.Ticker("TWD=X")
+        yf.set_tz_cache_location("/tmp/yfinance_tz_cache")
+    except Exception:
+        pass
+
+    try:
+        session = _create_yf_session()
+        twd_fx = yf.Ticker("TWD=X", session=session)
         fx_data = twd_fx.history(period="5d")
         if not fx_data.empty:
             valid_data = fx_data.dropna(subset=['Close'])
