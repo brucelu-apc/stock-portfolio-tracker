@@ -125,26 +125,66 @@ async def manual_price_refresh():
 @app.post("/api/prices/close-refresh", tags=["Monitor"])
 async def manual_close_refresh(region: str = "all"):
     """
-    Manually trigger yfinance close price update.
+    Manually trigger yfinance close price update with diagnostic info.
 
     - region=all  → Refresh both TW and US close prices + FX
     - region=tw   → Refresh TW close prices only
     - region=us   → Refresh US close prices + FX only
     """
-    from app.monitor.stock_monitor import daily_tw_close, daily_us_close
+    from app.monitor.stock_monitor import _get_tracked_tickers, _update_single_market_data, _supabase
+    from app.market.yfinance_fetcher import fetch_close_prices, fetch_exchange_rate
     results = {}
 
     try:
         if region in ("all", "tw"):
-            await daily_tw_close()
-            results["tw"] = "OK"
+            tickers = await _get_tracked_tickers(region='TPE')
+            results["tw_tickers_found"] = len(tickers)
+            results["tw_tickers"] = tickers[:10]  # Show first 10
+
+            if tickers:
+                ticker_dicts = [{'ticker': t, 'region': 'TPE'} for t in tickers]
+                prices = await fetch_close_prices(ticker_dicts, _supabase)
+                results["tw_prices_fetched"] = len(prices)
+
+                # Show sample data for debugging
+                sample = {}
+                for ticker, data in list(prices.items())[:5]:
+                    sample[ticker] = {
+                        "close": data.get('current_price'),
+                        "prev_close": data.get('prev_close'),
+                    }
+                results["tw_sample"] = sample
+
+                for ticker, data in prices.items():
+                    await _update_single_market_data(ticker, data, source='yfinance')
+
+                results["tw"] = "OK"
+            else:
+                results["tw"] = "NO_TICKERS"
 
         if region in ("all", "us"):
-            await daily_us_close()
-            results["us"] = "OK"
+            # FX
+            fx = await fetch_exchange_rate()
+            results["fx"] = "OK" if fx else "FAILED"
 
-        return {"success": True, "message": "Close price refresh triggered", "results": results}
+            us_tickers = await _get_tracked_tickers(region='US')
+            results["us_tickers_found"] = len(us_tickers)
+
+            if us_tickers:
+                ticker_dicts = [{'ticker': t, 'region': 'US'} for t in us_tickers]
+                prices = await fetch_close_prices(ticker_dicts, _supabase)
+                results["us_prices_fetched"] = len(prices)
+
+                for ticker, data in prices.items():
+                    await _update_single_market_data(ticker, data, source='yfinance')
+
+                results["us"] = "OK"
+            else:
+                results["us"] = "NO_TICKERS"
+
+        return {"success": True, "message": "Close price refresh completed", "results": results}
     except Exception as e:
+        logger.error(f"Close refresh error: {e}", exc_info=True)
         return {"success": False, "error": str(e), "results": results}
 
 
