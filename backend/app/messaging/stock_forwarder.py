@@ -45,6 +45,7 @@ class ForwardStock(BaseModel):
     reasonable_target_low: Optional[float] = None
     reasonable_target_high: Optional[float] = None
     entry_price: Optional[float] = None
+    strategy_notes: str = ""
 
 
 class ForwardTarget(BaseModel):
