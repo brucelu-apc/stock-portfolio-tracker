@@ -15,6 +15,7 @@ import {
   HStack,
   useToast,
   Switch,
+  Divider,
 } from '@chakra-ui/react'
 import { useState, useEffect } from 'react'
 import { supabase } from '../../services/supabase'
@@ -60,7 +61,9 @@ export const EditHoldingModal = ({ isOpen, onClose, onSuccess, holding }: Props)
     setLoading(true)
 
     try {
-      const { error } = await supabase
+      // Step 1: Update this specific record's individual fields
+      // (price, shares, date, name, region are per-record)
+      const { error: singleError } = await supabase
         .from('portfolio_holdings')
         .update({
           region,
@@ -75,7 +78,22 @@ export const EditHoldingModal = ({ isOpen, onClose, onSuccess, holding }: Props)
         })
         .eq('id', holding.id)
 
-      if (error) throw error
+      if (singleError) throw singleError
+
+      // Step 2: Batch update strategy_mode + manual_tp/sl for ALL records
+      // with the same ticker + user_id.
+      // This ensures all records of the same stock share the same strategy.
+      const { error: batchError } = await supabase
+        .from('portfolio_holdings')
+        .update({
+          strategy_mode: strategyMode,
+          manual_tp: manualTP ? parseFloat(manualTP) : null,
+          manual_sl: manualSL ? parseFloat(manualSL) : null,
+        })
+        .eq('ticker', holding.ticker)
+        .eq('user_id', holding.user_id)
+
+      if (batchError) throw batchError
 
       toast({ title: '更新成功', status: 'success' })
       onSuccess()
@@ -106,7 +124,7 @@ export const EditHoldingModal = ({ isOpen, onClose, onSuccess, holding }: Props)
 
               <FormControl isRequired>
                 <FormLabel>股票代碼</FormLabel>
-                <Input 
+                <Input
                   value={ticker}
                   onChange={(e) => setTicker(e.target.value)}
                 />
@@ -114,7 +132,7 @@ export const EditHoldingModal = ({ isOpen, onClose, onSuccess, holding }: Props)
 
               <FormControl>
                 <FormLabel>股票名稱</FormLabel>
-                <Input 
+                <Input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                 />
@@ -123,8 +141,8 @@ export const EditHoldingModal = ({ isOpen, onClose, onSuccess, holding }: Props)
               <HStack w="full">
                 <FormControl isRequired>
                   <FormLabel>買入價格</FormLabel>
-                  <Input 
-                    type="number" 
+                  <Input
+                    type="number"
                     step="any"
                     value={price}
                     onChange={(e) => setPrice(e.target.value)}
@@ -132,8 +150,8 @@ export const EditHoldingModal = ({ isOpen, onClose, onSuccess, holding }: Props)
                 </FormControl>
                 <FormControl isRequired>
                   <FormLabel>股數</FormLabel>
-                  <Input 
-                    type="number" 
+                  <Input
+                    type="number"
                     step="any"
                     value={shares}
                     onChange={(e) => setShares(e.target.value)}
@@ -143,8 +161,8 @@ export const EditHoldingModal = ({ isOpen, onClose, onSuccess, holding }: Props)
 
               <FormControl isRequired>
                 <FormLabel>買入日期</FormLabel>
-                <Input 
-                  type="date" 
+                <Input
+                  type="date"
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
                 />
@@ -156,8 +174,8 @@ export const EditHoldingModal = ({ isOpen, onClose, onSuccess, holding }: Props)
                 <FormLabel mb="0">
                   策略模式: {strategyMode === 'auto' ? '自動移動停利' : '手動設定'}
                 </FormLabel>
-                <Switch 
-                  isChecked={strategyMode === 'manual'} 
+                <Switch
+                  isChecked={strategyMode === 'manual'}
                   onChange={(e) => setStrategyMode(e.target.checked ? 'manual' : 'auto')}
                 />
               </FormControl>
@@ -166,8 +184,8 @@ export const EditHoldingModal = ({ isOpen, onClose, onSuccess, holding }: Props)
                 <HStack w="full">
                   <FormControl>
                     <FormLabel fontSize="sm">手動停利價</FormLabel>
-                    <Input 
-                      type="number" 
+                    <Input
+                      type="number"
                       step="any"
                       value={manualTP}
                       onChange={(e) => setManualTP(e.target.value)}
@@ -175,8 +193,8 @@ export const EditHoldingModal = ({ isOpen, onClose, onSuccess, holding }: Props)
                   </FormControl>
                   <FormControl>
                     <FormLabel fontSize="sm">手動停損價</FormLabel>
-                    <Input 
-                      type="number" 
+                    <Input
+                      type="number"
                       step="any"
                       value={manualSL}
                       onChange={(e) => setManualSL(e.target.value)}
@@ -198,5 +216,3 @@ export const EditHoldingModal = ({ isOpen, onClose, onSuccess, holding }: Props)
     </Modal>
   )
 }
-
-import { Divider } from '@chakra-ui/react'
