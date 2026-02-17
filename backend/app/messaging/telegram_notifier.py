@@ -191,11 +191,11 @@ async def send_parse_result(
       📅 2026/02/05 ~ 2026/02/10
 
       1. 億光(2393)
-         🛡 防守：53 元
-         📈 最小：68~77 元
+         🛡 防守價：53 元
+         📈 最小漲幅：68~77 元
 
       2. 矽統(2363)
-         📈 最小：88~105 元
+         📈 最小漲幅：88~105 元
     """
     if not stocks:
         return await send_html(chat_id, "未解析到任何股票資訊。")
@@ -220,13 +220,18 @@ async def send_parse_result(
         lines.append(f"<b>{i}. {name}({ticker})</b>")
 
         if defense:
-            lines.append(f"   🛡 防守：{defense} 元")
+            lines.append(f"   🛡 防守價：{defense} 元")
         if min_low and min_high:
-            lines.append(f"   📈 最小：{min_low}~{min_high} 元")
+            lines.append(f"   📈 最小漲幅：{min_low}~{min_high} 元")
         if reas_low and reas_high:
-            lines.append(f"   🎯 合理：{reas_low}~{reas_high} 元")
+            lines.append(f"   🎯 合理漲幅：{reas_low}~{reas_high} 元")
         if entry:
             lines.append(f"   💰 買進：≤{entry} 元")
+
+        # Strategy notes (解析結果說明)
+        notes = stock.get("strategy_notes", "")
+        if notes:
+            lines.append(f"   📝 {notes}")
         lines.append("")
 
     return await send_html(chat_id, "\n".join(lines))
@@ -265,12 +270,21 @@ async def send_forward_message(
         line = f"• <b>{name}({ticker})</b>"
         parts = []
         if defense:
-            parts.append(f"防守{defense}")
+            parts.append(f"防守價{defense}")
         if min_low and min_high:
-            parts.append(f"目標{min_low}~{min_high}")
+            parts.append(f"最小漲幅{min_low}~{min_high}")
+        reas_low = stock.get("reasonable_target_low")
+        reas_high = stock.get("reasonable_target_high")
+        if reas_low and reas_high:
+            parts.append(f"合理漲幅{reas_low}~{reas_high}")
         if parts:
             line += f"  {' | '.join(parts)}"
         lines.append(line)
+
+        # Strategy notes
+        notes = stock.get("strategy_notes", "")
+        if notes:
+            lines.append(f"  📝 {notes}")
 
     return await send_html(chat_id, "\n".join(lines))
 

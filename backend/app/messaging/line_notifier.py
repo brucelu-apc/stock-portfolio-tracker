@@ -587,12 +587,21 @@ async def send_forward_push(
         line = f"• {name}({ticker})"
         parts = []
         if defense:
-            parts.append(f"防守{defense}")
+            parts.append(f"防守價{defense}")
         if min_low and min_high:
-            parts.append(f"目標{min_low}~{min_high}")
+            parts.append(f"最小漲幅{min_low}~{min_high}")
+        reas_low = stock.get("reasonable_target_low")
+        reas_high = stock.get("reasonable_target_high")
+        if reas_low and reas_high:
+            parts.append(f"合理漲幅{reas_low}~{reas_high}")
         if parts:
             line += f"  {' | '.join(parts)}"
         lines.append(line)
+
+        # Strategy notes (解析結果說明)
+        notes = stock.get("strategy_notes", "")
+        if notes:
+            lines.append(f"  📝 {notes}")
 
     text = "\n".join(lines)
     return await _push_message(to, [{"type": "text", "text": text}])
