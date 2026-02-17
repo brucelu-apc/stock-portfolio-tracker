@@ -14,8 +14,15 @@ import {
   VStack,
   IconButton,
   Tooltip,
+  Drawer,
+  DrawerOverlay,
+  DrawerContent,
+  DrawerCloseButton,
+  DrawerHeader,
+  DrawerBody,
+  useDisclosure,
 } from '@chakra-ui/react'
-import { BellIcon } from '@chakra-ui/icons'
+import { HamburgerIcon, BellIcon } from '@chakra-ui/icons'
 import { supabase } from '../../services/supabase'
 
 interface NavbarProps {
@@ -37,6 +44,8 @@ export const Navbar = ({
   onNavigate,
   onOpenAnnouncement,
 }: NavbarProps) => {
+  const { isOpen, onOpen, onClose } = useDisclosure()
+
   const handleSignOut = async () => {
     await supabase.auth.signOut()
   }
@@ -64,7 +73,17 @@ export const Navbar = ({
     >
       <Container maxW="container.xl">
         <Flex h={24} alignItems={'center'} justifyContent={'space-between'}>
-          <HStack spacing={10}>
+          <HStack spacing={4}>
+            {/* Hamburger menu — mobile only */}
+            <IconButton
+              aria-label="開啟選單"
+              icon={<HamburgerIcon />}
+              variant="ghost"
+              size="sm"
+              display={{ base: 'flex', md: 'none' }}
+              onClick={onOpen}
+            />
+
             <VStack align="start" spacing={0} cursor="pointer" onClick={() => onNavigate('dashboard')}>
               <Text
                 fontWeight="900"
@@ -158,6 +177,51 @@ export const Navbar = ({
           </Flex>
         </Flex>
       </Container>
+
+      {/* Mobile navigation drawer */}
+      <Drawer isOpen={isOpen} placement="left" onClose={onClose}>
+        <DrawerOverlay />
+        <DrawerContent>
+          <DrawerCloseButton />
+          <DrawerHeader borderBottomWidth="1px">
+            <Text
+              fontWeight="900"
+              fontSize="lg"
+              bgGradient="linear(to-r, brand.500, brand.900)"
+              bgClip="text"
+            >
+              STOCK DANGO
+            </Text>
+          </DrawerHeader>
+          <DrawerBody pt={4}>
+            <VStack align="stretch" spacing={2}>
+              {navItems.map((item) => {
+                const isActive = currentPage === item.value
+                return (
+                  <Box
+                    key={item.value}
+                    px={4}
+                    py={3}
+                    rounded="lg"
+                    fontWeight="bold"
+                    fontSize="md"
+                    color={isActive ? 'white' : 'ui.navy'}
+                    bg={isActive ? 'brand.500' : 'transparent'}
+                    cursor="pointer"
+                    _hover={{ bg: isActive ? 'brand.600' : 'gray.100' }}
+                    onClick={() => {
+                      onNavigate(item.value)
+                      onClose()
+                    }}
+                  >
+                    {item.label}
+                  </Box>
+                )
+              })}
+            </VStack>
+          </DrawerBody>
+        </DrawerContent>
+      </Drawer>
     </Box>
   )
 }
