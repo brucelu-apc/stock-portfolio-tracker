@@ -113,13 +113,39 @@ async def monitor_status():
 
 @app.post("/api/prices/refresh", tags=["Monitor"])
 async def manual_price_refresh():
-    """Manually trigger a price refresh for all tracked stocks."""
-    from app.monitor.stock_monitor import realtime_tw_monitor, daily_us_close
+    """Manually trigger a real-time price refresh (twstock) for TW stocks."""
+    from app.monitor.stock_monitor import realtime_tw_monitor
     try:
         await realtime_tw_monitor()
-        return {"success": True, "message": "Price refresh triggered"}
+        return {"success": True, "message": "Realtime price refresh triggered"}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+@app.post("/api/prices/close-refresh", tags=["Monitor"])
+async def manual_close_refresh(region: str = "all"):
+    """
+    Manually trigger yfinance close price update.
+
+    - region=all  → Refresh both TW and US close prices + FX
+    - region=tw   → Refresh TW close prices only
+    - region=us   → Refresh US close prices + FX only
+    """
+    from app.monitor.stock_monitor import daily_tw_close, daily_us_close
+    results = {}
+
+    try:
+        if region in ("all", "tw"):
+            await daily_tw_close()
+            results["tw"] = "OK"
+
+        if region in ("all", "us"):
+            await daily_us_close()
+            results["us"] = "OK"
+
+        return {"success": True, "message": "Close price refresh triggered", "results": results}
+    except Exception as e:
+        return {"success": False, "error": str(e), "results": results}
 
 
 @app.post("/api/report/generate", tags=["Report"])
