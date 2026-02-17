@@ -61,10 +61,16 @@ interface SortConfig {
   order: SortOrder
 }
 
+// Aggregate context passed when editing from the top-level row
+export interface AggregateEditInfo {
+  totalShares: number
+  avgCost: number
+}
+
 interface HoldingRowProps {
   group: AggregatedHolding
   marketData: { [ticker: string]: any }
-  onEdit: (holding: Holding) => void
+  onEdit: (holding: Holding, aggregateInfo?: AggregateEditInfo) => void
   onDelete: (holding: Holding) => void
 }
 
@@ -241,7 +247,7 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
               icon={<EditIcon />}
               size="sm"
               variant="ghost"
-              onClick={() => onEdit(latestItem)}
+              onClick={() => onEdit(latestItem, group.isMultiple ? { totalShares: group.totalShares, avgCost: group.avgCost } : undefined)}
             />
             <IconButton
               aria-label="Delete"
@@ -359,12 +365,14 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
 
   const toast = useToast()
   const [editHolding, setEditHolding] = useState<Holding | null>(null)
+  const [editAggregateInfo, setEditAggregateInfo] = useState<AggregateEditInfo | null>(null)
   const [sellHolding, setSellHolding] = useState<AggregatedHolding | Holding | null>(null)
   const { isOpen, onOpen, onClose } = useDisclosure()
   const { isOpen: isSellOpen, onOpen: onSellOpen, onClose: onSellClose } = useDisclosure()
 
-  const handleEdit = (holding: Holding) => {
+  const handleEdit = (holding: Holding, aggregateInfo?: AggregateEditInfo) => {
     setEditHolding(holding)
+    setEditAggregateInfo(aggregateInfo || null)
     onOpen()
   }
 
@@ -589,6 +597,7 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
         isOpen={isOpen}
         onClose={onClose}
         holding={editHolding}
+        aggregateInfo={editAggregateInfo}
         onSuccess={onDataChange || (() => {})}
       />
 
