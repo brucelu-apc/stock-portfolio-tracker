@@ -110,8 +110,8 @@ def classify_message(text: str) -> MessageType:
         if any(kw in text for kw in ["早安", "快樂", "美好", "希望", "太陽", "大門"]):
             return MessageType.GREETING
 
-    # Check for sell signal
-    if RE_SELL_SIGNAL.search(text) and ("資金轉買" in text or "走勢不如預期" in text):
+    # Check for sell signal (note: "資金轉買" is a buy indicator, not sell)
+    if RE_SELL_SIGNAL.search(text) and ("走勢不如預期" in text or "資金轉買" in text):
         return MessageType.SELL_SIGNAL
 
     # Check for market analysis (大盤解析)
@@ -276,22 +276,79 @@ def extract_buy_signal_stocks(text: str) -> list[ParsedStock]:
 
 
 def extract_sell_signal_stocks(text: str) -> list[ParsedStock]:
-    """Extract stocks from sell signal messages."""
+    """
+    Extract stocks from sell signal messages.
+
+    Handles compound messages like:
+      "中鋼（2002）走勢不如預期…賣出，資金轉買億光（2393）…防守價53元…"
+    → 中鋼 = SELL, 億光 = BUY (with defense/entry prices)
+    """
     stocks: list[ParsedStock] = []
 
-    for m in re.finditer(r"([^\d\s,，。（(）)\n]{1,6})[（(](\d{4,6})[）)]", text):
+    # Detect compound sell + buy message: "資金轉買" splits the message
+    buy_split_pos = text.find("資金轉買")
+    if buy_split_pos >= 0:
+        sell_part = text[:buy_split_pos]
+        buy_part = text[buy_split_pos:]
+    else:
+        sell_part = text
+        buy_part = ""
+
+    # --- Extract SELL stocks (from text before 資金轉買, or entire text) ---
+    for m in re.finditer(r"([^\d\s,，。（(）)\n]{1,6})[（(](\d{4,6})[）)]", sell_part):
         name = m.group(1).strip()
         ticker = m.group(2)
         if "防守" not in name:
             stock = ParsedStock(ticker=ticker, name=name)
-            # Try to extract actual 操作策略 content; fallback to sell reason
-            strategy_match = re.search(r"操作策略[：:]\s*(.+?)(?:\n\n|\Z)", text, re.DOTALL)
-            if strategy_match:
-                stock.strategy_notes = strategy_match.group(1).strip()[:500]
-            else:
-                sell_reason = re.search(r"(走勢不如預期|獲利了結|目標價到|離場)", text)
-                stock.strategy_notes = f"賣出 — {sell_reason.group(1)}" if sell_reason else "賣出"
+            sell_reason = re.search(r"(走勢不如預期|獲利了結|目標價到|離場)", sell_part)
+            stock.strategy_notes = f"賣出 — {sell_reason.group(1)}" if sell_reason else "賣出"
             stocks.append(stock)
+
+    # --- Extract BUY stocks (from text after 資金轉買) ---
+    if buy_part:
+        for m in re.finditer(r"([^\d\s,，。（(）)\n]{1,6})[（(](\d{4,6})[）)]", buy_part):
+            raw_name = m.group(1).strip()
+            ticker = m.group(2)
+
+            # Clean name: strip "資金轉買" prefix
+            name = re.sub(r"^(?:資金轉買|轉買)", "", raw_name).strip()
+            if not name:
+                name = raw_name
+
+            if "防守" not in name:
+                stock = ParsedStock(ticker=ticker, name=name)
+
+                # Extract defense price from buy_part
+                stock.defense_price = _extract_defense_price(buy_part)
+
+                # Extract entry price
+                entry_match = RE_ENTRY_PRICE.search(buy_part)
+                if entry_match:
+                    stock.entry_price = float(entry_match.group(1))
+
+                # Extract targets if present
+                min_match = RE_MIN_TARGET.search(buy_part)
+                if min_match:
+                    stock.min_target_low = float(min_match.group(1))
+                    stock.min_target_high = float(min_match.group(2))
+                reas_match = RE_REASONABLE_TARGET.search(buy_part)
+                if reas_match:
+                    stock.reasonable_target_low = float(reas_match.group(1))
+                    stock.reasonable_target_high = float(reas_match.group(2))
+
+                # Strategy notes from buy context
+                strategy_match = re.search(r"操作策略[：:]\s*(.+?)(?:\n\n|\Z)", buy_part, re.DOTALL)
+                if strategy_match:
+                    stock.strategy_notes = strategy_match.group(1).strip()[:500]
+                else:
+                    # Try to capture parenthetical reason: （低檔有主力進場的跡象）
+                    # Skip pure numbers like （2393） by requiring at least one CJK char
+                    reason_match = re.search(r"[（(]([^）)\d]{2}[^）)]{2,48})[）)]", buy_part)
+                    if reason_match:
+                        stock.strategy_notes = f"資金轉買 — {reason_match.group(1)}"
+                    else:
+                        stock.strategy_notes = "資金轉買"
+                stocks.append(stock)
 
     return stocks
 
