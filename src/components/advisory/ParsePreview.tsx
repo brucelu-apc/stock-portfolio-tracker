@@ -325,8 +325,7 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
             colorScheme="green"
             onClick={handleOpenManage}
             rounded="xl"
-            px={4}
-            size="sm"
+            px={6}
           >
             📋 編輯轉發清單
           </Button>
@@ -348,7 +347,7 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
             isLoading={importing}
             loadingText="匯入中..."
             rounded="xl"
-            px={8}
+            px={6}
             bgGradient="linear(to-r, brand.500, brand.600)"
             _hover={{ bgGradient: "linear(to-r, brand.600, brand.900)" }}
             isDisabled={selected.size === 0}
