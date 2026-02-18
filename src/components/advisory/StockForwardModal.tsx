@@ -1,12 +1,12 @@
 /**
- * StockForwardModal — Modal for forwarding selected stocks to LINE/Telegram targets.
+ * StockForwardModal — Modal for managing forward targets and forwarding stocks.
  *
- * Flow:
- *  1. User clicks "轉發" button in ParsePreview
- *  2. Modal opens with list of forward targets
- *  3. User selects targets (checkboxes)
- *  4. Click "轉發" to send formatted messages to each target
- *  5. Results shown with success/failure status
+ * Two modes:
+ *  1. "forward" mode (default): Select targets and send immediately
+ *  2. "manage" mode: Manage the quick-forward list (add/remove from 轉發清單)
+ *
+ * The quick-forward list uses the `is_default` flag on forward_targets.
+ * Targets in the list are used by the "轉發" quick-send button in ParsePreview.
  */
 import { useState, useEffect, useCallback } from 'react'
 import {
@@ -30,7 +30,11 @@ import {
   useToast,
   Divider,
   Spinner,
+  Switch,
+  IconButton,
+  Tooltip,
 } from '@chakra-ui/react'
+import { DeleteIcon } from '@chakra-ui/icons'
 import {
   type ParsedStock,
   type ForwardTarget,
@@ -38,13 +42,18 @@ import {
   addForwardTarget,
   deleteForwardTarget,
   forwardStocks,
+  toggleForwardList,
 } from '../../services/backend'
+
+type ModalMode = 'forward' | 'manage'
 
 interface StockForwardModalProps {
   isOpen: boolean
   onClose: () => void
   stocks: ParsedStock[]
   userId: string
+  /** Initial mode: 'forward' to select & send, 'manage' to edit the quick list */
+  initialMode?: ModalMode
 }
 
 const PLATFORM_CONFIG = {
@@ -57,8 +66,10 @@ export const StockForwardModal = ({
   onClose,
   stocks,
   userId,
+  initialMode = 'forward',
 }: StockForwardModalProps) => {
   const toast = useToast()
+  const [mode, setMode] = useState<ModalMode>(initialMode)
   const [targets, setTargets] = useState<ForwardTarget[]>([])
   const [selectedTargets, setSelectedTargets] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
@@ -71,6 +82,13 @@ export const StockForwardModal = ({
   const [newTargetName, setNewTargetName] = useState('')
   const [newTargetType, setNewTargetType] = useState<'user' | 'group'>('user')
 
+  // Reset mode when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setMode(initialMode)
+    }
+  }, [isOpen, initialMode])
+
   // Load forward targets
   const loadTargets = useCallback(async () => {
     if (!userId) return
@@ -78,7 +96,7 @@ export const StockForwardModal = ({
     try {
       const data = await getForwardTargets(userId)
       setTargets(data)
-      // Auto-select defaults
+      // Auto-select defaults for forward mode
       const defaults = new Set(
         data.filter((t) => t.is_default).map((t) => t.id)
       )
@@ -101,7 +119,7 @@ export const StockForwardModal = ({
     }
   }, [isOpen, loadTargets])
 
-  // Toggle target selection
+  // Toggle target selection (for forward mode)
   const toggleTarget = (id: string) => {
     setSelectedTargets((prev) => {
       const next = new Set(prev)
@@ -112,6 +130,32 @@ export const StockForwardModal = ({
       }
       return next
     })
+  }
+
+  // Toggle target's quick-list membership (for manage mode)
+  const handleToggleList = async (targetId: string, currentDefault: boolean) => {
+    try {
+      const updated = await toggleForwardList(targetId, userId, !currentDefault)
+      if (updated) {
+        setTargets((prev) =>
+          prev.map((t) =>
+            t.id === targetId ? { ...t, is_default: !currentDefault } : t
+          )
+        )
+        toast({
+          title: !currentDefault ? '已加入轉發清單' : '已從轉發清單移除',
+          status: 'success',
+          duration: 2000,
+        })
+      }
+    } catch (err: any) {
+      toast({
+        title: '更新失敗',
+        description: err.message,
+        status: 'error',
+        duration: 3000,
+      })
+    }
   }
 
   // Add new target
@@ -159,7 +203,7 @@ export const StockForwardModal = ({
     }
   }
 
-  // Forward stocks
+  // Forward stocks (forward mode)
   const handleForward = async () => {
     if (selectedTargets.size === 0) {
       toast({ title: '請選擇至少一個轉發目標', status: 'warning', duration: 2000 })
@@ -188,7 +232,6 @@ export const StockForwardModal = ({
         })
         onClose()
       } else {
-        // Show detailed failure reasons from each target
         const failDetails = resp.results
           ?.filter((r) => !r.success)
           .map((r) => `${r.target_name}(${r.platform}): ${r.error}`)
@@ -208,135 +251,249 @@ export const StockForwardModal = ({
     }
   }
 
+  const quickListCount = targets.filter((t) => t.is_default).length
+
+  // ─── Render target row for forward mode ───
+  const renderForwardRow = (target: ForwardTarget) => {
+    const config = PLATFORM_CONFIG[target.platform as keyof typeof PLATFORM_CONFIG]
+    return (
+      <Flex
+        key={target.id}
+        p={3}
+        bg={selectedTargets.has(target.id) ? 'blue.50' : 'white'}
+        rounded="xl"
+        border="1px solid"
+        borderColor={selectedTargets.has(target.id) ? 'blue.300' : 'gray.200'}
+        align="center"
+        cursor="pointer"
+        onClick={() => toggleTarget(target.id)}
+        transition="all 0.15s"
+        _hover={{ borderColor: 'blue.300' }}
+      >
+        <Checkbox
+          isChecked={selectedTargets.has(target.id)}
+          onChange={() => toggleTarget(target.id)}
+          colorScheme="blue"
+          mr={3}
+          onClick={(e) => e.stopPropagation()}
+        />
+        <VStack align="start" spacing={0} flex={1}>
+          <HStack spacing={2}>
+            <Text fontWeight="bold" fontSize="sm">
+              {config?.emoji} {target.target_name}
+            </Text>
+            <Badge colorScheme={config?.color || 'gray'} size="sm" rounded="full">
+              {config?.label || target.platform}
+            </Badge>
+            <Badge colorScheme="gray" variant="outline" size="sm" rounded="full">
+              {target.target_type === 'group' ? '群組' : '個人'}
+            </Badge>
+            {target.is_default && (
+              <Badge colorScheme="yellow" size="sm" rounded="full">
+                清單
+              </Badge>
+            )}
+          </HStack>
+          <Text fontSize="xs" color="gray.500">
+            ID: {target.target_id.substring(0, 12)}...
+          </Text>
+        </VStack>
+        <Button
+          size="xs"
+          variant="ghost"
+          colorScheme="red"
+          onClick={(e) => {
+            e.stopPropagation()
+            handleDeleteTarget(target.id)
+          }}
+        >
+          刪除
+        </Button>
+      </Flex>
+    )
+  }
+
+  // ─── Render target row for manage mode ───
+  const renderManageRow = (target: ForwardTarget) => {
+    const config = PLATFORM_CONFIG[target.platform as keyof typeof PLATFORM_CONFIG]
+    return (
+      <Flex
+        key={target.id}
+        p={3}
+        bg={target.is_default ? 'green.50' : 'white'}
+        rounded="xl"
+        border="1px solid"
+        borderColor={target.is_default ? 'green.300' : 'gray.200'}
+        align="center"
+        transition="all 0.15s"
+      >
+        <VStack align="start" spacing={0} flex={1}>
+          <HStack spacing={2}>
+            <Text fontWeight="bold" fontSize="sm">
+              {config?.emoji} {target.target_name}
+            </Text>
+            <Badge colorScheme={config?.color || 'gray'} size="sm" rounded="full">
+              {config?.label || target.platform}
+            </Badge>
+            <Badge colorScheme="gray" variant="outline" size="sm" rounded="full">
+              {target.target_type === 'group' ? '群組' : '個人'}
+            </Badge>
+          </HStack>
+          <Text fontSize="xs" color="gray.500">
+            ID: {target.target_id.substring(0, 12)}...
+          </Text>
+        </VStack>
+
+        <HStack spacing={2}>
+          <Tooltip label={target.is_default ? '從轉發清單移除' : '加入轉發清單'}>
+            <Box>
+              <Switch
+                colorScheme="green"
+                isChecked={target.is_default}
+                onChange={() => handleToggleList(target.id, target.is_default)}
+              />
+            </Box>
+          </Tooltip>
+          <Tooltip label="刪除目標">
+            <IconButton
+              aria-label="刪除"
+              icon={<DeleteIcon />}
+              size="xs"
+              variant="ghost"
+              colorScheme="red"
+              onClick={() => handleDeleteTarget(target.id)}
+            />
+          </Tooltip>
+        </HStack>
+      </Flex>
+    )
+  }
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="lg" isCentered>
       <ModalOverlay bg="blackAlpha.400" backdropFilter="blur(4px)" />
       <ModalContent rounded="2xl" mx={4}>
         <ModalHeader>
           <HStack spacing={2}>
-            <Text>📨 轉發股票資訊</Text>
-            <Badge colorScheme="blue" rounded="full" px={2}>
-              {stocks.length} 檔
-            </Badge>
+            <Text>
+              {mode === 'forward' ? '📨 轉發股票資訊' : '📋 編輯轉發清單'}
+            </Text>
+            {mode === 'forward' && (
+              <Badge colorScheme="blue" rounded="full" px={2}>
+                {stocks.length} 檔
+              </Badge>
+            )}
+            {mode === 'manage' && (
+              <Badge colorScheme="green" rounded="full" px={2}>
+                清單 {quickListCount} 個
+              </Badge>
+            )}
           </HStack>
         </ModalHeader>
         <ModalCloseButton />
 
         <ModalBody>
-          {/* Stock summary */}
-          <Box bg="gray.50" p={3} rounded="xl" mb={4}>
-            <Text fontSize="sm" color="gray.600" mb={1}>
-              轉發內容：
-            </Text>
-            <Flex wrap="wrap" gap={2}>
-              {stocks.slice(0, 10).map((s) => (
-                <Badge key={s.ticker} colorScheme="blue" variant="subtle" rounded="md">
-                  {s.name}({s.ticker})
-                </Badge>
-              ))}
-              {stocks.length > 10 && (
-                <Badge colorScheme="gray" variant="subtle" rounded="md">
-                  +{stocks.length - 10} 檔
-                </Badge>
+          {/* Mode switcher tabs */}
+          <HStack spacing={2} mb={4}>
+            <Button
+              size="sm"
+              rounded="lg"
+              variant={mode === 'forward' ? 'solid' : 'outline'}
+              colorScheme="blue"
+              onClick={() => setMode('forward')}
+            >
+              選擇轉發目標
+            </Button>
+            <Button
+              size="sm"
+              rounded="lg"
+              variant={mode === 'manage' ? 'solid' : 'outline'}
+              colorScheme="green"
+              onClick={() => setMode('manage')}
+            >
+              編輯轉發清單
+            </Button>
+          </HStack>
+
+          {mode === 'forward' && (
+            <>
+              {/* Stock summary */}
+              <Box bg="gray.50" p={3} rounded="xl" mb={4}>
+                <Text fontSize="sm" color="gray.600" mb={1}>
+                  轉發內容：
+                </Text>
+                <Flex wrap="wrap" gap={2}>
+                  {stocks.slice(0, 10).map((s) => (
+                    <Badge key={s.ticker} colorScheme="blue" variant="subtle" rounded="md">
+                      {s.name}({s.ticker})
+                    </Badge>
+                  ))}
+                  {stocks.length > 10 && (
+                    <Badge colorScheme="gray" variant="subtle" rounded="md">
+                      +{stocks.length - 10} 檔
+                    </Badge>
+                  )}
+                </Flex>
+              </Box>
+
+              <Divider mb={4} />
+
+              <Text fontWeight="bold" mb={3}>
+                選擇轉發目標
+              </Text>
+
+              {loading ? (
+                <Flex justify="center" py={6}>
+                  <Spinner color="blue.500" />
+                </Flex>
+              ) : targets.length === 0 ? (
+                <Box textAlign="center" py={6}>
+                  <Text color="gray.500" mb={2}>
+                    尚未設定轉發目標
+                  </Text>
+                  <Text fontSize="sm" color="gray.400">
+                    點擊「編輯轉發清單」來添加 LINE 或 Telegram 聯絡人
+                  </Text>
+                </Box>
+              ) : (
+                <VStack spacing={2} align="stretch" mb={4}>
+                  {targets.map(renderForwardRow)}
+                </VStack>
               )}
-            </Flex>
-          </Box>
-
-          <Divider mb={4} />
-
-          {/* Target list */}
-          <Text fontWeight="bold" mb={3}>
-            選擇轉發目標
-          </Text>
-
-          {loading ? (
-            <Flex justify="center" py={6}>
-              <Spinner color="blue.500" />
-            </Flex>
-          ) : targets.length === 0 ? (
-            <Box textAlign="center" py={6}>
-              <Text color="gray.500" mb={2}>
-                尚未設定轉發目標
-              </Text>
-              <Text fontSize="sm" color="gray.400">
-                點擊下方「新增目標」來添加 LINE 或 Telegram 聯絡人
-              </Text>
-            </Box>
-          ) : (
-            <VStack spacing={2} align="stretch" mb={4}>
-              {targets.map((target) => {
-                const config = PLATFORM_CONFIG[target.platform as keyof typeof PLATFORM_CONFIG]
-                return (
-                  <Flex
-                    key={target.id}
-                    p={3}
-                    bg={selectedTargets.has(target.id) ? 'blue.50' : 'white'}
-                    rounded="xl"
-                    border="1px solid"
-                    borderColor={
-                      selectedTargets.has(target.id) ? 'blue.300' : 'gray.200'
-                    }
-                    align="center"
-                    cursor="pointer"
-                    onClick={() => toggleTarget(target.id)}
-                    transition="all 0.15s"
-                    _hover={{ borderColor: 'blue.300' }}
-                  >
-                    <Checkbox
-                      isChecked={selectedTargets.has(target.id)}
-                      onChange={() => toggleTarget(target.id)}
-                      colorScheme="blue"
-                      mr={3}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                    <VStack align="start" spacing={0} flex={1}>
-                      <HStack spacing={2}>
-                        <Text fontWeight="bold" fontSize="sm">
-                          {config?.emoji} {target.target_name}
-                        </Text>
-                        <Badge
-                          colorScheme={config?.color || 'gray'}
-                          size="sm"
-                          rounded="full"
-                        >
-                          {config?.label || target.platform}
-                        </Badge>
-                        <Badge
-                          colorScheme="gray"
-                          variant="outline"
-                          size="sm"
-                          rounded="full"
-                        >
-                          {target.target_type === 'group' ? '群組' : '個人'}
-                        </Badge>
-                        {target.is_default && (
-                          <Badge colorScheme="yellow" size="sm" rounded="full">
-                            預設
-                          </Badge>
-                        )}
-                      </HStack>
-                      <Text fontSize="xs" color="gray.500">
-                        ID: {target.target_id.substring(0, 12)}...
-                      </Text>
-                    </VStack>
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      colorScheme="red"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleDeleteTarget(target.id)
-                      }}
-                    >
-                      刪除
-                    </Button>
-                  </Flex>
-                )
-              })}
-            </VStack>
+            </>
           )}
 
-          {/* Add target form */}
+          {mode === 'manage' && (
+            <>
+              {/* Manage mode explanation */}
+              <Box bg="green.50" p={3} rounded="xl" mb={4}>
+                <Text fontSize="sm" color="green.700">
+                  開啟開關將目標加入「轉發清單」。在解析結果頁面點擊「轉發」時，系統會自動發送至清單中的所有目標。
+                </Text>
+              </Box>
+
+              {loading ? (
+                <Flex justify="center" py={6}>
+                  <Spinner color="green.500" />
+                </Flex>
+              ) : targets.length === 0 ? (
+                <Box textAlign="center" py={6}>
+                  <Text color="gray.500" mb={2}>
+                    尚未設定轉發目標
+                  </Text>
+                  <Text fontSize="sm" color="gray.400">
+                    點擊下方「新增轉發目標」來添加 LINE 或 Telegram 聯絡人
+                  </Text>
+                </Box>
+              ) : (
+                <VStack spacing={2} align="stretch" mb={4}>
+                  {targets.map(renderManageRow)}
+                </VStack>
+              )}
+            </>
+          )}
+
+          {/* Add target form — shown in both modes */}
           {showAddForm ? (
             <Box bg="gray.50" p={4} rounded="xl" mt={2}>
               <Text fontWeight="bold" fontSize="sm" mb={3}>
@@ -424,21 +581,23 @@ export const StockForwardModal = ({
         <ModalFooter>
           <HStack spacing={3}>
             <Button variant="ghost" onClick={onClose} rounded="lg">
-              取消
+              {mode === 'manage' ? '完成' : '取消'}
             </Button>
-            <Button
-              colorScheme="blue"
-              onClick={handleForward}
-              isLoading={forwarding}
-              loadingText="轉發中..."
-              rounded="xl"
-              px={6}
-              isDisabled={selectedTargets.size === 0}
-              bgGradient="linear(to-r, blue.400, blue.600)"
-              _hover={{ bgGradient: 'linear(to-r, blue.500, blue.700)' }}
-            >
-              轉發至 {selectedTargets.size} 個目標
-            </Button>
+            {mode === 'forward' && (
+              <Button
+                colorScheme="blue"
+                onClick={handleForward}
+                isLoading={forwarding}
+                loadingText="轉發中..."
+                rounded="xl"
+                px={6}
+                isDisabled={selectedTargets.size === 0}
+                bgGradient="linear(to-r, blue.400, blue.600)"
+                _hover={{ bgGradient: 'linear(to-r, blue.500, blue.700)' }}
+              >
+                轉發至 {selectedTargets.size} 個目標
+              </Button>
+            )}
           </HStack>
         </ModalFooter>
       </ModalContent>

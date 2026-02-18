@@ -193,6 +193,61 @@ export async function deleteForwardTarget(targetId: string, userId: string): Pro
 }
 
 /**
+ * Toggle a forward target's membership in the quick-forward list.
+ */
+export async function toggleForwardList(
+  targetId: string,
+  userId: string,
+  isDefault: boolean,
+): Promise<ForwardTarget | null> {
+  const params = new URLSearchParams({
+    user_id: userId,
+    is_default: String(isDefault),
+  })
+  const response = await fetch(
+    `${BACKEND_URL}/api/forward/targets/${targetId}/toggle-list?${params}`,
+    { method: 'PATCH' }
+  )
+  if (!response.ok) throw new Error(`Failed to toggle list: ${response.status}`)
+  const data = await response.json()
+  return data.target || null
+}
+
+/**
+ * Quick-forward stocks to all targets in the user's forward list (is_default = true).
+ * Loads targets, filters to defaults, then forwards.
+ */
+export async function quickForwardStocks(
+  userId: string,
+  stocks: ParsedStock[],
+  senderName: string = 'Stock Tracker',
+): Promise<ForwardResponse> {
+  // Step 1: Get all targets, filter to quick-list (is_default)
+  const allTargets = await getForwardTargets(userId)
+  const quickTargets = allTargets.filter((t) => t.is_default)
+
+  if (quickTargets.length === 0) {
+    return {
+      success: false,
+      total_targets: 0,
+      sent_count: 0,
+      failed_count: 0,
+      results: [],
+    }
+  }
+
+  // Step 2: Forward to quick-list targets
+  const targetList = quickTargets.map((t) => ({
+    forward_target_id: t.id,
+    platform: t.platform,
+    target_id: t.target_id,
+    target_name: t.target_name,
+  }))
+
+  return forwardStocks(userId, stocks, targetList, senderName)
+}
+
+/**
  * Forward selected stocks to targets.
  */
 export async function forwardStocks(

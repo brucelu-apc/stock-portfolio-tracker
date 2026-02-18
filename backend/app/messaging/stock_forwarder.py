@@ -245,6 +245,35 @@ async def delete_forward_target(target_id: str, user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.patch("/api/forward/targets/{target_id}/toggle-list")
+async def toggle_forward_list(target_id: str, user_id: str, is_default: bool):
+    """Toggle a forward target's membership in the quick-forward list."""
+    try:
+        from supabase import create_client
+        settings = get_settings()
+        supabase = create_client(
+            settings.SUPABASE_URL,
+            settings.SUPABASE_SERVICE_ROLE_KEY,
+        )
+
+        res = (
+            supabase.table("forward_targets")
+            .update({"is_default": is_default})
+            .eq("id", target_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+
+        return {
+            "success": True,
+            "target": res.data[0] if res.data else None,
+        }
+
+    except Exception as e:
+        logger.error(f"Toggle forward list error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ─── Forward History ────────────────────────────────────────
 
 @router.get("/api/forward/logs")

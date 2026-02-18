@@ -25,8 +25,10 @@ import {
   TagLabel,
 } from '@chakra-ui/react'
 import { useDisclosure } from '@chakra-ui/react'
-import { type ParseResponse, type ParsedStock, importNotification } from '../../services/backend'
+import { type ParseResponse, type ParsedStock, importNotification, quickForwardStocks } from '../../services/backend'
 import { StockForwardModal } from './StockForwardModal'
+
+type ForwardModalMode = 'forward' | 'manage'
 
 interface ParsePreviewProps {
   result: ParseResponse
@@ -49,6 +51,8 @@ const MSG_TYPE_CONFIG: Record<string, { label: string; color: string }> = {
 export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePreviewProps) => {
   const toast = useToast()
   const [importing, setImporting] = useState(false)
+  const [quickForwarding, setQuickForwarding] = useState(false)
+  const [forwardModalMode, setForwardModalMode] = useState<ForwardModalMode>('forward')
   const forwardModal = useDisclosure()
 
   // Deduplicate stocks across all messages
@@ -124,6 +128,62 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
     } finally {
       setImporting(false)
     }
+  }
+
+  // Quick forward: send directly to pre-defined forward list
+  const handleQuickForward = async () => {
+    if (selected.size === 0) {
+      toast({ title: '請至少選擇一檔股票', status: 'warning', duration: 3000 })
+      return
+    }
+
+    setQuickForwarding(true)
+    try {
+      const selectedStocks = allStocks.filter((s) => selected.has(s.ticker))
+      const resp = await quickForwardStocks(userId, selectedStocks)
+
+      if (resp.total_targets === 0) {
+        // No targets in quick list — prompt to set up
+        toast({
+          title: '尚未設定轉發清單',
+          description: '請先點擊「編輯轉發清單」設定快速轉發目標',
+          status: 'warning',
+          duration: 4000,
+        })
+        // Open modal in manage mode
+        setForwardModalMode('manage')
+        forwardModal.onOpen()
+      } else if (resp.success) {
+        toast({
+          title: '轉發完成',
+          description: `成功 ${resp.sent_count} 個，失敗 ${resp.failed_count} 個`,
+          status: resp.failed_count > 0 ? 'warning' : 'success',
+          duration: 4000,
+        })
+      } else {
+        const failDetails = resp.results
+          ?.filter((r) => !r.success)
+          .map((r) => `${r.target_name}(${r.platform}): ${r.error}`)
+          .join('; ')
+        toast({
+          title: '轉發失敗',
+          description: failDetails || '所有目標都發送失敗',
+          status: 'error',
+          duration: 6000,
+          isClosable: true,
+        })
+      }
+    } catch (err: any) {
+      toast({ title: '轉發錯誤', description: err.message, status: 'error', duration: 4000 })
+    } finally {
+      setQuickForwarding(false)
+    }
+  }
+
+  // Open forward modal in manage mode
+  const handleOpenManage = () => {
+    setForwardModalMode('manage')
+    forwardModal.onOpen()
   }
 
   return (
@@ -255,15 +315,27 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
       <Divider mb={4} />
 
       {/* Action buttons */}
-      <Flex justify="space-between" align="center">
+      <Flex justify="space-between" align="center" flexWrap="wrap" gap={2}>
         <Text fontSize="sm" color="ui.slate">
           已選擇 {selected.size} / {allStocks.length} 檔
         </Text>
-        <HStack spacing={3}>
+        <HStack spacing={3} flexWrap="wrap">
+          <Button
+            variant="outline"
+            colorScheme="green"
+            onClick={handleOpenManage}
+            rounded="xl"
+            px={4}
+            size="sm"
+          >
+            📋 編輯轉發清單
+          </Button>
           <Button
             variant="outline"
             colorScheme="blue"
-            onClick={forwardModal.onOpen}
+            onClick={handleQuickForward}
+            isLoading={quickForwarding}
+            loadingText="轉發中..."
             rounded="xl"
             px={6}
             isDisabled={selected.size === 0}
@@ -286,12 +358,13 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
         </HStack>
       </Flex>
 
-      {/* Forward Modal */}
+      {/* Forward Modal (supports both forward and manage modes) */}
       <StockForwardModal
         isOpen={forwardModal.isOpen}
         onClose={forwardModal.onClose}
         stocks={allStocks.filter((s) => selected.has(s.ticker))}
         userId={userId}
+        initialMode={forwardModalMode}
       />
     </Box>
   )
