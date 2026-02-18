@@ -314,21 +314,29 @@ async def _update_high_watermarks(prices: dict[str, dict]):
 async def _process_alerts(current_prices: dict[str, float]):
     """Check both advisory and portfolio alerts, record and (future) push."""
 
-    # ── Advisory alerts ──
-    try:
-        res = _supabase.table("price_targets").select("*").eq("is_latest", True).execute()
-        advisory_alerts = check_advisory_alerts(current_prices, res.data)
-    except Exception as e:
-        logger.error(f"Advisory alert check error: {e}")
-        advisory_alerts = []
+    # ── Build stock name lookup {ticker: name} from holdings ──
+    name_map: dict[str, str] = {}
 
-    # ── Portfolio alerts ──
+    # ── Portfolio alerts ── (run first to build name_map)
     try:
         res = _supabase.table("portfolio_holdings").select("*").execute()
+        for h in res.data:
+            t = h.get("ticker", "")
+            n = h.get("name", "")
+            if t and n and t not in name_map:
+                name_map[t] = n
         portfolio_alerts = check_portfolio_alerts(current_prices, res.data)
     except Exception as e:
         logger.error(f"Portfolio alert check error: {e}")
         portfolio_alerts = []
+
+    # ── Advisory alerts ──
+    try:
+        res = _supabase.table("price_targets").select("*").eq("is_latest", True).execute()
+        advisory_alerts = check_advisory_alerts(current_prices, res.data, name_map=name_map)
+    except Exception as e:
+        logger.error(f"Advisory alert check error: {e}")
+        advisory_alerts = []
 
     all_alerts = advisory_alerts + portfolio_alerts
 
@@ -438,9 +446,10 @@ async def _push_alert_to_line(alert: AlertEvent) -> bool:
             dashboard_url = "https://stock-portfolio-tracker-tawny.vercel.app"
 
         # Send the alert via LINE
+        display_name = f"{alert.stock_name}({alert.ticker})" if alert.stock_name else alert.ticker
         return await send_alert_push(
             line_user_id=line_user_id,
-            ticker=alert.ticker,
+            ticker=display_name,
             alert_type=alert.alert_type,
             trigger_price=alert.trigger_price,
             current_price=alert.current_price,
@@ -506,9 +515,10 @@ async def _push_alert_to_telegram(alert: AlertEvent) -> bool:
             dashboard_url = "https://stock-portfolio-tracker-tawny.vercel.app"
 
         # Send the alert via Telegram
+        display_name = f"{alert.stock_name}({alert.ticker})" if alert.stock_name else alert.ticker
         return await send_alert(
             chat_id=telegram_chat_id,
-            ticker=alert.ticker,
+            ticker=display_name,
             alert_type=alert.alert_type,
             trigger_price=alert.trigger_price,
             current_price=alert.current_price,

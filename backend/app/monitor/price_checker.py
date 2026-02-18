@@ -28,6 +28,7 @@ class AlertEvent:
     """Represents a triggered price alert."""
     user_id: str
     ticker: str
+    stock_name: str  # 股票名稱 e.g. "億光"
     alert_type: str  # defense_breach | min_target_reached | reasonable_target_reached | tp_triggered | sl_triggered
     trigger_price: float  # The threshold that was breached
     current_price: float
@@ -39,6 +40,7 @@ class AlertEvent:
 def check_advisory_alerts(
     current_prices: dict[str, float],
     price_targets: list[dict],
+    name_map: dict[str, str] | None = None,
 ) -> list[AlertEvent]:
     """
     Compare current prices against advisory defense/target prices.
@@ -48,11 +50,13 @@ def check_advisory_alerts(
         price_targets: List of price_targets rows from Supabase
             Each has: user_id, ticker, defense_price, min_target_low/high,
                       reasonable_target_low/high, is_latest
+        name_map: Optional {ticker: stock_name} lookup
 
     Returns:
         List of AlertEvent for each triggered condition
     """
     alerts: list[AlertEvent] = []
+    _names = name_map or {}
 
     for target in price_targets:
         if not target.get('is_latest'):
@@ -64,6 +68,7 @@ def check_advisory_alerts(
             continue
 
         user_id = target['user_id']
+        name = _names.get(ticker, "")
 
         # ── Defense price breach ──
         defense = target.get('defense_price')
@@ -71,6 +76,7 @@ def check_advisory_alerts(
             alerts.append(AlertEvent(
                 user_id=user_id,
                 ticker=ticker,
+                stock_name=name,
                 alert_type='defense_breach',
                 trigger_price=defense,
                 current_price=current,
@@ -85,6 +91,7 @@ def check_advisory_alerts(
                 alerts.append(AlertEvent(
                     user_id=user_id,
                     ticker=ticker,
+                    stock_name=name,
                     alert_type='min_target_reached',
                     trigger_price=min_low,
                     current_price=current,
@@ -99,6 +106,7 @@ def check_advisory_alerts(
                 alerts.append(AlertEvent(
                     user_id=user_id,
                     ticker=ticker,
+                    stock_name=name,
                     alert_type='reasonable_target_reached',
                     trigger_price=reas_low,
                     current_price=current,
@@ -160,6 +168,7 @@ def check_portfolio_alerts(
             aggregated[key] = {
                 'user_id': h['user_id'],
                 'ticker': h['ticker'],
+                'name': h.get('name', ''),
                 'total_shares': 0,
                 'total_cost': 0,
                 'strategy_mode': h.get('strategy_mode', 'auto'),
@@ -189,11 +198,14 @@ def check_portfolio_alerts(
 
         tp, sl = calculate_tp_sl(agg)
 
+        name = agg.get('name', '')
+
         # ── TP triggered ──
         if current >= tp:
             alerts.append(AlertEvent(
                 user_id=agg['user_id'],
                 ticker=ticker,
+                stock_name=name,
                 alert_type='tp_triggered',
                 trigger_price=tp,
                 current_price=current,
@@ -205,6 +217,7 @@ def check_portfolio_alerts(
             alerts.append(AlertEvent(
                 user_id=agg['user_id'],
                 ticker=ticker,
+                stock_name=name,
                 alert_type='sl_triggered',
                 trigger_price=sl,
                 current_price=current,
