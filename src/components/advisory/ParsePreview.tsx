@@ -322,15 +322,6 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
         <HStack spacing={3} flexWrap="wrap">
           <Button
             variant="outline"
-            colorScheme="green"
-            onClick={handleOpenManage}
-            rounded="xl"
-            px={6}
-          >
-            📋 編輯轉發清單
-          </Button>
-          <Button
-            variant="outline"
             colorScheme="blue"
             onClick={handleQuickForward}
             isLoading={quickForwarding}
@@ -340,6 +331,15 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
             isDisabled={selected.size === 0}
           >
             📨 轉發 ({selected.size})
+          </Button>
+          <Button
+            variant="outline"
+            colorScheme="green"
+            onClick={handleOpenManage}
+            rounded="xl"
+            px={6}
+          >
+            📋 編輯轉發清單
           </Button>
           <Button
             colorScheme="blue"

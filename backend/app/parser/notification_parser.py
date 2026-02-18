@@ -264,7 +264,12 @@ def extract_buy_signal_stocks(text: str) -> list[ParsedStock]:
                 stock.reasonable_target_low = float(reas_m.group(1))
                 stock.reasonable_target_high = float(reas_m.group(2))
 
-            stock.strategy_notes = "買進建立"
+            # Try to extract actual 操作策略 content; fallback to "買進建立"
+            strategy_match = re.search(r"操作策略[：:]\s*(.+?)(?:\n\n|\Z)", text, re.DOTALL)
+            if strategy_match:
+                stock.strategy_notes = strategy_match.group(1).strip()[:500]
+            else:
+                stock.strategy_notes = "買進建立"
             stocks.append(stock)
 
     return stocks
@@ -279,9 +284,13 @@ def extract_sell_signal_stocks(text: str) -> list[ParsedStock]:
         ticker = m.group(2)
         if "防守" not in name:
             stock = ParsedStock(ticker=ticker, name=name)
-            # Try to capture reason
-            sell_reason = re.search(r"(走勢不如預期|獲利了結|目標價到|離場)", text)
-            stock.strategy_notes = f"賣出 — {sell_reason.group(1)}" if sell_reason else "賣出"
+            # Try to extract actual 操作策略 content; fallback to sell reason
+            strategy_match = re.search(r"操作策略[：:]\s*(.+?)(?:\n\n|\Z)", text, re.DOTALL)
+            if strategy_match:
+                stock.strategy_notes = strategy_match.group(1).strip()[:500]
+            else:
+                sell_reason = re.search(r"(走勢不如預期|獲利了結|目標價到|離場)", text)
+                stock.strategy_notes = f"賣出 — {sell_reason.group(1)}" if sell_reason else "賣出"
             stocks.append(stock)
 
     return stocks
