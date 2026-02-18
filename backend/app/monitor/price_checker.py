@@ -32,6 +32,7 @@ class AlertEvent:
     alert_type: str  # defense_breach | min_target_reached | reasonable_target_reached | tp_triggered | sl_triggered
     trigger_price: float  # The threshold that was breached
     current_price: float
+    strategy_notes: str = ""  # 解析結果說明
     details: str = ""
 
 
@@ -69,6 +70,7 @@ def check_advisory_alerts(
 
         user_id = target['user_id']
         name = _names.get(ticker, "")
+        notes = target.get('strategy_notes', "") or ""
 
         # ── Defense price breach ──
         defense = target.get('defense_price')
@@ -80,6 +82,7 @@ def check_advisory_alerts(
                 alert_type='defense_breach',
                 trigger_price=defense,
                 current_price=current,
+                strategy_notes=notes,
                 details=f"⚠️ {ticker} 跌破防守價 {defense} 元！目前 {current:.2f} 元",
             ))
 
@@ -95,6 +98,7 @@ def check_advisory_alerts(
                     alert_type='min_target_reached',
                     trigger_price=min_low,
                     current_price=current,
+                    strategy_notes=notes,
                     details=f"✅ {ticker} 達到最小漲幅 {min_low}~{min_high} 元！目前 {current:.2f} 元",
                 ))
 
@@ -110,6 +114,7 @@ def check_advisory_alerts(
                     alert_type='reasonable_target_reached',
                     trigger_price=reas_low,
                     current_price=current,
+                    strategy_notes=notes,
                     details=f"🎯 {ticker} 達到合理漲幅 {reas_low}~{reas_high} 元！目前 {current:.2f} 元",
                 ))
 

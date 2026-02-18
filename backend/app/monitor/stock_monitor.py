@@ -454,6 +454,7 @@ async def _push_alert_to_line(alert: AlertEvent) -> bool:
             trigger_price=alert.trigger_price,
             current_price=alert.current_price,
             dashboard_url=f"{dashboard_url}?page=advisory",
+            strategy_notes=alert.strategy_notes,
         )
 
     except Exception as e:
@@ -523,6 +524,7 @@ async def _push_alert_to_telegram(alert: AlertEvent) -> bool:
             trigger_price=alert.trigger_price,
             current_price=alert.current_price,
             dashboard_url=f"{dashboard_url}?page=advisory",
+            strategy_notes=alert.strategy_notes,
         )
 
     except Exception as e:
