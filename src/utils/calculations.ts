@@ -67,20 +67,21 @@ export const aggregateHoldings = (holdings: Holding[], marketData: { [ticker: st
 
     // Get market data
     const mData = marketData[ticker] || {}
-    const currentPrice = mData.current_price || avgCost
-    const prevClose = mData.prev_close || currentPrice
+    const prevClose = mData.prev_close || 0
     const sector = mData.sector || "Unknown"
 
-    const change = currentPrice - prevClose
-    const changePercent = prevClose !== 0 ? (change / prevClose) * 100 : 0
-
     // Separated realtime vs close prices
-    // Use || instead of ?? so that 0 or falsy values also fallback
     const realtimePrice: number | null = mData.realtime_price || null
     const closePrice: number = mData.close_price || mData.current_price || avgCost
 
+    // Best available price for PnL: realtime > close > current > avgCost
+    const currentPrice = realtimePrice || closePrice || mData.current_price || avgCost
+
+    const change = prevClose !== 0 ? currentPrice - prevClose : 0
+    const changePercent = prevClose !== 0 ? (change / prevClose) * 100 : 0
+
     // Close change: points & percentage
-    const closeChange = closePrice - prevClose
+    const closeChange = prevClose !== 0 ? closePrice - prevClose : 0
     const closeChangePct = prevClose !== 0 ? ((closePrice - prevClose) / prevClose) * 100 : 0
 
     // Realtime change: points & percentage (null when no realtime data)
@@ -94,10 +95,12 @@ export const aggregateHoldings = (holdings: Holding[], marketData: { [ticker: st
     const fxRate = latest.region === 'US' ? (marketData['USDTWD']?.current_price || 32.5) : 1
 
     // Values in TWD for summary consistency
+    // Use closePrice for PnL calculation (most reliable price source)
+    const pnlPrice = realtimePrice || closePrice
     const totalCostTWD = totalCost * fxRate
-    const marketValueTWD = (currentPrice * totalShares) * fxRate
+    const marketValueTWD = (pnlPrice * totalShares) * fxRate
     const unrealizedPnlTWD = marketValueTWD - totalCostTWD
-    const roi = totalCost > 0 ? (unrealizedPnlTWD / totalCostTWD) * 100 : 0
+    const roi = totalCostTWD > 0 ? (unrealizedPnlTWD / totalCostTWD) * 100 : 0
 
     return {
       user_id: latest.user_id,
