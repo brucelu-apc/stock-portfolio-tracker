@@ -38,6 +38,7 @@ export const EditHoldingModal = ({ isOpen, onClose, onSuccess, holding, aggregat
   const [name, setName] = useState('')
   const [price, setPrice] = useState('')
   const [shares, setShares] = useState('')
+  const [buyFee, setBuyFee] = useState('')
   const [date, setDate] = useState('')
   const [strategyMode, setStrategyMode] = useState<'auto' | 'manual'>('auto')
   const [manualTP, setManualTP] = useState('')
@@ -62,10 +63,12 @@ export const EditHoldingModal = ({ isOpen, onClose, onSuccess, holding, aggregat
         // Aggregate mode: show totals
         setShares(aggregateInfo.totalShares.toString())
         setPrice(aggregateInfo.avgCost.toFixed(2))
+        setBuyFee('')  // Not editable in aggregate mode
       } else {
         // Single record mode: show this record's values
         setShares(holding.shares?.toString() || '0')
         setPrice(holding.cost_price?.toString() || '0')
+        setBuyFee(holding.buy_fee?.toString() || '0')
       }
     }
   }, [holding, aggregateInfo])
@@ -101,6 +104,7 @@ export const EditHoldingModal = ({ isOpen, onClose, onSuccess, holding, aggregat
             name: name.trim(),
             cost_price: parseFloat(price),
             shares: parseFloat(shares),
+            buy_fee: parseFloat(buyFee) || 0,
             buy_date: date,
             strategy_mode: strategyMode,
             manual_tp: manualTP ? parseFloat(manualTP) : null,
@@ -205,6 +209,20 @@ export const EditHoldingModal = ({ isOpen, onClose, onSuccess, holding, aggregat
                     onChange={(e) => setShares(e.target.value)}
                     isDisabled={isAggregate}
                     bg={isAggregate ? 'gray.100' : undefined}
+                  />
+                </FormControl>
+                <FormControl>
+                  <FormLabel>
+                    {isAggregate ? '手續費 (唯讀)' : '手續費'}
+                  </FormLabel>
+                  <Input
+                    type="number"
+                    step="any"
+                    value={buyFee}
+                    onChange={(e) => setBuyFee(e.target.value)}
+                    isDisabled={isAggregate}
+                    bg={isAggregate ? 'gray.100' : undefined}
+                    placeholder="0"
                   />
                 </FormControl>
               </HStack>
