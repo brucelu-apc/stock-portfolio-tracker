@@ -33,6 +33,7 @@ import {
   Switch,
   IconButton,
   Tooltip,
+  ButtonGroup,
 } from '@chakra-ui/react'
 import { DeleteIcon } from '@chakra-ui/icons'
 import {
@@ -44,6 +45,16 @@ import {
   forwardStocks,
   toggleForwardList,
 } from '../../services/backend'
+import { supabase } from '../../services/supabase'
+
+/** A registered messaging user from the user_messaging directory */
+interface MessagingUser {
+  user_id: string
+  email: string
+  line_user_id: string | null
+  telegram_chat_id: number | null
+  created_at: string
+}
 
 type ModalMode = 'forward' | 'manage'
 
@@ -82,6 +93,11 @@ export const StockForwardModal = ({
   const [newTargetName, setNewTargetName] = useState('')
   const [newTargetType, setNewTargetType] = useState<'user' | 'group'>('user')
 
+  // Directory dropdown state
+  const [inputMode, setInputMode] = useState<'manual' | 'select'>('manual')
+  const [messagingUsers, setMessagingUsers] = useState<MessagingUser[]>([])
+  const [loadingDirectory, setLoadingDirectory] = useState(false)
+
   // Reset mode when modal opens
   useEffect(() => {
     if (isOpen) {
@@ -118,6 +134,59 @@ export const StockForwardModal = ({
       loadTargets()
     }
   }, [isOpen, loadTargets])
+
+  // Load messaging directory when add form opens in "select" mode
+  const loadMessagingDirectory = useCallback(async () => {
+    setLoadingDirectory(true)
+    try {
+      const { data, error } = await supabase.rpc('get_messaging_directory')
+      if (error) throw error
+      setMessagingUsers(data || [])
+    } catch (err: any) {
+      console.error('Failed to load messaging directory:', err)
+      toast({
+        title: '載入通訊錄失敗',
+        description: err.message,
+        status: 'error',
+        duration: 3000,
+      })
+    } finally {
+      setLoadingDirectory(false)
+    }
+  }, [toast])
+
+  useEffect(() => {
+    if (showAddForm && inputMode === 'select') {
+      loadMessagingDirectory()
+    }
+  }, [showAddForm, inputMode, loadMessagingDirectory])
+
+  // Filter directory entries by selected platform
+  const filteredDirectoryUsers = messagingUsers.filter((u) => {
+    if (newPlatform === 'line') return !!u.line_user_id
+    if (newPlatform === 'telegram') return !!u.telegram_chat_id
+    return false
+  })
+
+  // Handle selecting a user from the directory dropdown
+  const handleDirectorySelect = (selectedValue: string) => {
+    if (!selectedValue) {
+      setNewTargetId('')
+      setNewTargetName('')
+      return
+    }
+    const user = messagingUsers.find((u) => {
+      if (newPlatform === 'line') return u.line_user_id === selectedValue
+      if (newPlatform === 'telegram') return String(u.telegram_chat_id) === selectedValue
+      return false
+    })
+    if (user) {
+      setNewTargetId(selectedValue)
+      // Auto-fill display name with email prefix (before @)
+      const emailPrefix = user.email?.split('@')[0] || ''
+      setNewTargetName(emailPrefix)
+    }
+  }
 
   // Toggle target selection (for forward mode)
   const toggleTarget = (id: string) => {
@@ -505,9 +574,12 @@ export const StockForwardModal = ({
                     size="sm"
                     rounded="lg"
                     value={newPlatform}
-                    onChange={(e) =>
+                    onChange={(e) => {
                       setNewPlatform(e.target.value as 'line' | 'telegram')
-                    }
+                      // Reset selection when platform changes
+                      setNewTargetId('')
+                      setNewTargetName('')
+                    }}
                     w="40%"
                   >
                     <option value="telegram">Telegram</option>
@@ -533,22 +605,93 @@ export const StockForwardModal = ({
                   value={newTargetName}
                   onChange={(e) => setNewTargetName(e.target.value)}
                 />
-                <Input
-                  size="sm"
-                  rounded="lg"
-                  placeholder={
-                    newPlatform === 'telegram'
-                      ? 'Telegram Chat ID（如：123456789）'
-                      : 'LINE User/Group ID'
-                  }
-                  value={newTargetId}
-                  onChange={(e) => setNewTargetId(e.target.value)}
-                />
+
+                {/* Input mode toggle: manual vs select from directory */}
+                <Box w="full">
+                  <HStack spacing={1} mb={2}>
+                    <Text fontSize="xs" color="gray.500">
+                      ID 輸入方式：
+                    </Text>
+                    <ButtonGroup size="xs" isAttached variant="outline">
+                      <Button
+                        rounded="md"
+                        colorScheme={inputMode === 'manual' ? 'blue' : 'gray'}
+                        variant={inputMode === 'manual' ? 'solid' : 'outline'}
+                        onClick={() => setInputMode('manual')}
+                      >
+                        手動輸入
+                      </Button>
+                      <Button
+                        rounded="md"
+                        colorScheme={inputMode === 'select' ? 'blue' : 'gray'}
+                        variant={inputMode === 'select' ? 'solid' : 'outline'}
+                        onClick={() => setInputMode('select')}
+                      >
+                        從通訊錄選擇
+                      </Button>
+                    </ButtonGroup>
+                  </HStack>
+
+                  {inputMode === 'manual' ? (
+                    <Input
+                      size="sm"
+                      rounded="lg"
+                      placeholder={
+                        newPlatform === 'telegram'
+                          ? 'Telegram Chat ID（如：123456789）'
+                          : 'LINE User/Group ID'
+                      }
+                      value={newTargetId}
+                      onChange={(e) => setNewTargetId(e.target.value)}
+                    />
+                  ) : loadingDirectory ? (
+                    <Flex justify="center" py={2}>
+                      <Spinner size="sm" color="blue.400" />
+                      <Text fontSize="xs" color="gray.500" ml={2}>
+                        載入通訊錄...
+                      </Text>
+                    </Flex>
+                  ) : filteredDirectoryUsers.length === 0 ? (
+                    <Box py={2}>
+                      <Text fontSize="xs" color="orange.500">
+                        目前沒有已註冊的{newPlatform === 'line' ? ' LINE ' : ' Telegram '}用戶，請使用手動輸入。
+                      </Text>
+                    </Box>
+                  ) : (
+                    <Select
+                      size="sm"
+                      rounded="lg"
+                      placeholder="— 請選擇 —"
+                      value={newTargetId}
+                      onChange={(e) => handleDirectorySelect(e.target.value)}
+                    >
+                      {filteredDirectoryUsers.map((u) => {
+                        const id =
+                          newPlatform === 'line'
+                            ? u.line_user_id!
+                            : String(u.telegram_chat_id!)
+                        const dateStr = new Date(u.created_at).toLocaleDateString('zh-TW')
+                        return (
+                          <option key={u.user_id} value={id}>
+                            {u.email} — ID: {id.substring(0, 16)}
+                            {id.length > 16 ? '...' : ''} （{dateStr}）
+                          </option>
+                        )
+                      })}
+                    </Select>
+                  )}
+                </Box>
+
                 <HStack spacing={2} w="full" justify="end">
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => setShowAddForm(false)}
+                    onClick={() => {
+                      setShowAddForm(false)
+                      setInputMode('manual')
+                      setNewTargetId('')
+                      setNewTargetName('')
+                    }}
                     rounded="lg"
                   >
                     取消
