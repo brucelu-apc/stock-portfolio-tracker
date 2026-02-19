@@ -243,6 +243,7 @@ def extract_buy_signal_stocks(text: str) -> list[ParsedStock]:
         ticker = m.group(2)
         if "防守" not in name:
             stock = ParsedStock(ticker=ticker, name=name)
+            stock.action_type = "buy"
 
             # Defense price
             defense_match = RE_DEFENSE_PRICE.search(text)
@@ -300,6 +301,7 @@ def extract_sell_signal_stocks(text: str) -> list[ParsedStock]:
         ticker = m.group(2)
         if "防守" not in name:
             stock = ParsedStock(ticker=ticker, name=name)
+            stock.action_type = "sell"
             sell_reason = re.search(r"(走勢不如預期|獲利了結|目標價到|離場)", sell_part)
             stock.strategy_notes = f"賣出 — {sell_reason.group(1)}" if sell_reason else "賣出"
             stocks.append(stock)
@@ -317,6 +319,7 @@ def extract_sell_signal_stocks(text: str) -> list[ParsedStock]:
 
             if "防守" not in name:
                 stock = ParsedStock(ticker=ticker, name=name)
+                stock.action_type = "buy"
 
                 # Extract defense price from buy_part
                 stock.defense_price = _extract_defense_price(buy_part)

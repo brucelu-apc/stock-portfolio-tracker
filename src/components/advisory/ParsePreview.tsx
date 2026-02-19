@@ -217,7 +217,14 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
       <VStack spacing={3} align="stretch" mb={6}>
         {allStocks.map((stock) => {
           const isChecked = selected.has(stock.ticker)
-          const typeConfig = MSG_TYPE_CONFIG[stock.messageType] || MSG_TYPE_CONFIG.greeting
+          // Per-stock action_type overrides parent message type for compound messages
+          // e.g., a stock with action_type="buy" inside a SELL_SIGNAL message → show 買進訊號
+          const effectiveType = stock.action_type === 'buy'
+            ? 'buy_signal'
+            : stock.action_type === 'sell'
+              ? 'sell_signal'
+              : stock.messageType
+          const typeConfig = MSG_TYPE_CONFIG[effectiveType] || MSG_TYPE_CONFIG.greeting
 
           return (
             <Box
@@ -257,7 +264,7 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
                         <Tooltip label="跌破此價位需離場">
                           <HStack>
                             <Text fontSize="xs" color="red.500" fontWeight="bold">
-                              防守
+                              防守價
                             </Text>
                             <Text fontSize="sm" fontWeight="bold" color="red.600">
                               {stock.defense_price} 元

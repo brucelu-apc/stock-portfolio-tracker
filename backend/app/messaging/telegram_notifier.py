@@ -126,6 +126,7 @@ async def send_alert(
     trigger_price: float,
     current_price: float,
     dashboard_url: str = "",
+    strategy_notes: str = "",
 ) -> bool:
     """
     Send a formatted price alert to Telegram.
@@ -133,9 +134,10 @@ async def send_alert(
     Format:
       🔴 跌破防守價
       ━━━━━━━━━━━━━
-      📊 億光 (2393)
+      📊 億光(2393)
       現價：52.30 元
       防守價：53.00 元
+      📝 策略說明...
       ⏰ 14:32 TST
       [查看 Dashboard]
     """
@@ -155,14 +157,19 @@ async def send_alert(
     }
     trigger_label = trigger_labels.get(alert_type, "觸發價")
 
-    html = (
-        f"{emoji} <b>{label}</b>\n"
-        f"━━━━━━━━━━━━━\n"
-        f"📊 <b>{ticker}</b>\n"
-        f"現價：<b>{current_price:.2f}</b> 元\n"
-        f"{trigger_label}：<b>{trigger_price:.2f}</b> 元\n"
-        f"⏰ {now_tst} TST"
-    )
+    lines = [
+        f"{emoji} <b>{label}</b>",
+        f"━━━━━━━━━━━━━",
+        f"📊 <b>{ticker}</b>",
+        f"現價：<b>{current_price:.2f}</b> 元",
+        f"{trigger_label}：<b>{trigger_price:.2f}</b> 元",
+    ]
+
+    if strategy_notes:
+        lines.append(f"📝 {strategy_notes}")
+
+    lines.append(f"⏰ {now_tst} TST")
+    html = "\n".join(lines)
 
     # Inline keyboard with dashboard link
     reply_markup = None
@@ -277,6 +284,9 @@ async def send_forward_message(
         reas_high = stock.get("reasonable_target_high")
         if reas_low and reas_high:
             parts.append(f"合理漲幅{reas_low}~{reas_high}")
+        entry = stock.get("entry_price")
+        if entry:
+            parts.append(f"買進≤{entry}")
         if parts:
             line += f"  {' | '.join(parts)}"
         lines.append(line)

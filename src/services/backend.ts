@@ -17,6 +17,7 @@ export interface ParsedStock {
   reasonable_target_high: number | null
   entry_price: number | null
   strategy_notes: string
+  action_type: string  // "buy" | "sell" | "" — per-stock action for compound messages
 }
 
 export interface ParsedMessage {

@@ -38,6 +38,7 @@ class ParsedStock(BaseModel):
     reasonable_target_high: Optional[float] = Field(None, description="合理漲幅上界")
     entry_price: Optional[float] = Field(None, description="建議買進價")
     strategy_notes: str = Field("", description="操作策略備註")
+    action_type: str = Field("", description="個股操作類型: buy/sell/hold（用於複合訊息中區分個別股票）")
 
 
 class ParsedMessage(BaseModel):

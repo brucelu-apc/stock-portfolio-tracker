@@ -171,6 +171,7 @@ def _build_alert_flex(
     trigger_price: float,
     current_price: float,
     dashboard_url: str = "",
+    strategy_notes: str = "",
 ) -> dict:
     """
     Build a Flex Message bubble for a price alert.
@@ -312,6 +313,17 @@ def _build_alert_flex(
         },
     }
 
+    # Add strategy notes to body if available
+    if strategy_notes:
+        bubble["body"]["contents"].append({
+            "type": "text",
+            "text": f"📝 {strategy_notes}",
+            "size": "xs",
+            "color": "#888888",
+            "margin": "lg",
+            "wrap": True,
+        })
+
     # Add dashboard link as footer if URL is provided
     if dashboard_url:
         bubble["footer"] = {
@@ -342,22 +354,24 @@ async def send_alert_push(
     trigger_price: float,
     current_price: float,
     dashboard_url: str = "",
+    strategy_notes: str = "",
 ) -> bool:
     """
     Send a rich Flex Message alert to a LINE user.
 
     Args:
         line_user_id: LINE user ID
-        ticker: Stock ticker (e.g., "2393")
+        ticker: Stock ticker or display name (e.g., "億光(2393)")
         alert_type: One of: defense_breach, min_target_reached, etc.
         trigger_price: The threshold price that was breached
         current_price: Current market price
         dashboard_url: Optional link to dashboard
+        strategy_notes: Optional strategy explanation text
 
     Returns:
         True if sent successfully
     """
-    bubble = _build_alert_flex(ticker, alert_type, trigger_price, current_price, dashboard_url)
+    bubble = _build_alert_flex(ticker, alert_type, trigger_price, current_price, dashboard_url, strategy_notes)
 
     flex_message = {
         "type": "flex",
@@ -440,9 +454,9 @@ def _build_parse_result_flex(stocks: list[dict], dates: list[str]) -> dict:
         if strategy and strategy != "法人鎖碼股":
             body_contents.append({
                 "type": "text",
-                "text": strategy[:50],
+                "text": f"📝 {strategy[:200]}",
                 "size": "xs",
-                "color": "#999999",
+                "color": "#888888",
                 "margin": "md",
                 "wrap": True,
             })
@@ -594,6 +608,9 @@ async def send_forward_push(
         reas_high = stock.get("reasonable_target_high")
         if reas_low and reas_high:
             parts.append(f"合理漲幅{reas_low}~{reas_high}")
+        entry = stock.get("entry_price")
+        if entry:
+            parts.append(f"買進≤{entry}")
         if parts:
             line += f"  {' | '.join(parts)}"
         lines.append(line)
