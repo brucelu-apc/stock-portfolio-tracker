@@ -51,9 +51,19 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
           throw new Error('CSV 檔案格式不正確或沒有資料')
         }
 
-        // Parse headers to get indexes
+        // Parse headers (first row = English column names)
         const headers = rows[0].split(',').map(h => h.trim().replace(/"/g, ''))
-        const dataRows = rows.slice(1)
+
+        // Skip Chinese alias row if present (second row starts with "股票代碼")
+        let dataStartIndex = 1
+        if (rows.length > 1) {
+          const secondRowFirstCell = rows[1].split(',')[0].trim().replace(/"/g, '')
+          if (/[\u4e00-\u9fff]/.test(secondRowFirstCell)) {
+            // Contains Chinese characters → it's an alias row, skip it
+            dataStartIndex = 2
+          }
+        }
+        const dataRows = rows.slice(dataStartIndex)
 
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) throw new Error('未登入用戶')
@@ -70,9 +80,10 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
             }
           })
           
-          // Basic validation/cleanup
+          // Basic validation/cleanup — parse numeric fields
           if (item.shares) item.shares = parseFloat(item.shares)
           if (item.cost_price) item.cost_price = parseFloat(item.cost_price)
+          item.buy_fee = item.buy_fee ? parseFloat(item.buy_fee) || 0 : 0
           if (!item.buy_date) item.buy_date = new Date().toISOString()
           
           return item
@@ -155,7 +166,8 @@ export const ImportDataModal: React.FC<ImportDataModalProps> = ({
               </HStack>
               <Text fontSize="xs" color="blue.600" mt={2}>
                 請確保 CSV 包含以下標題欄位：<br />
-                <b>ticker, region, name, shares, cost_price, strategy_mode, buy_date</b><br />
+                <b>ticker, region, name, shares, cost_price, buy_fee, strategy_mode, buy_date</b><br />
+                第二行可加中文別名列（導入時會自動跳過）。<br />
                 (推薦先執行「導出 CSV」作為範本修改)
               </Text>
             </Box>

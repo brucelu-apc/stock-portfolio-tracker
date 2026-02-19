@@ -275,21 +275,28 @@ function App() {
       return
     }
 
-    // Define CSV headers
-    const headers = ['ticker', 'region', 'name', 'shares', 'cost_price', 'strategy_mode', 'buy_date']
+    // Define CSV headers (English keys = DB column names)
+    const headers = ['ticker', 'region', 'name', 'shares', 'cost_price', 'buy_fee', 'strategy_mode', 'buy_date']
 
-    // Create rows
+    // Chinese alias row for user reference when editing
+    const chineseAliases = [
+      '股票代碼', '地區(TPE/US)', '股票名稱', '股數',
+      '買入價格', '手續費', '策略模式(auto/manual)', '買入日期'
+    ].map(v => `"${v}"`).join(',')
+
+    // Create data rows
     const rows = holdings.map(h => [
       h.ticker,
       h.region,
       h.name,
       h.shares,
       h.cost_price,
+      h.buy_fee || 0,
       h.strategy_mode,
       h.buy_date
     ].map(val => `"${val}"`).join(','))
 
-    const csvContent = [headers.join(','), ...rows].join('\n')
+    const csvContent = [headers.join(','), chineseAliases, ...rows].join('\n')
     const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
 
