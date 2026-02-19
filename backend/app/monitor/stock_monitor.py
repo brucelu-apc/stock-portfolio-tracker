@@ -75,9 +75,12 @@ async def init_monitor(supabase_client):
     )
 
     # ── Job 3: US market close + FX update ──
+    # Run at 06:30 TST (not 05:30) to ensure yfinance has finalized close data.
+    # US market closes at 4 PM ET = ~05:00 TST (EST) / ~04:00 TST (EDT).
+    # yfinance's history() API may need 30-60 min to include the latest close.
     scheduler.add_job(
         daily_us_close,
-        CronTrigger(hour=5, minute=30, timezone=TST),
+        CronTrigger(hour=6, minute=30, timezone=TST),
         id='daily_us_close',
         name='Daily US Close + FX Update',
         replace_existing=True,
@@ -260,6 +263,11 @@ async def _update_market_data_batch(
                 upsert_data["day_low"] = data['day_low']
             if data.get('volume'):
                 upsert_data["volume"] = data['volume']
+            # TWSE API fallback provides prev_close and name
+            if data.get('prev_close'):
+                upsert_data["prev_close"] = data['prev_close']
+            if data.get('name'):
+                upsert_data["name"] = data['name']
 
             _supabase.table("market_data").upsert(
                 upsert_data, on_conflict='ticker'

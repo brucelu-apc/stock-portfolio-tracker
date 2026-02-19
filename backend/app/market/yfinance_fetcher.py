@@ -247,6 +247,12 @@ async def _fetch_via_yfinance(
     Used for:
       - US stocks (primary)
       - Taiwan stocks that TWSE API missed (fallback)
+
+    Strategy (two-tier):
+      Tier 1: ticker.info['regularMarketPrice'] — most up-to-date price
+              (after market close, this IS the latest close price)
+      Tier 2: ticker.history(period="5d") — fallback if .info fails
+              (may return stale data if called too soon after close)
     """
     try:
         import yfinance as yf
@@ -274,37 +280,69 @@ async def _fetch_via_yfinance(
                 query_ticker = ticker
 
             ticker_obj = yf.Ticker(query_ticker, session=session)
-            hist = ticker_obj.history(period="5d")
 
-            # .TW → .TWO fallback
-            if (hist is None or hist.empty) and region == 'TPE':
-                alt_ticker = f"{ticker}.TWO"
-                logger.info(f"yfinance fallback: {query_ticker} → {alt_ticker}")
-                await asyncio.sleep(FETCH_DELAY)
-                ticker_obj = yf.Ticker(alt_ticker, session=session)
-                hist = ticker_obj.history(period="5d")
-                if hist is not None and not hist.empty:
-                    query_ticker = alt_ticker
-
-            if hist is None or hist.empty:
-                logger.warning(f"yfinance: no data for {ticker}")
-                continue
-
-            valid_data = hist.dropna(subset=['Close'])
-            if valid_data.empty:
-                continue
-
-            close_price = float(valid_data['Close'].iloc[-1])
-            if not is_valid_number(close_price):
-                continue
-
-            prev_close = close_price
-            if len(valid_data) >= 2:
-                pc = valid_data['Close'].iloc[-2]
-                if is_valid_number(pc):
-                    prev_close = float(pc)
-
+            # ── Tier 1: Try ticker.info for the most accurate price ──
+            close_price = None
+            prev_close = None
             sector = existing_sectors.get(ticker, "Unknown")
+            used_info = False
+
+            try:
+                info = ticker_obj.info
+                if info:
+                    # regularMarketPrice = latest trade price
+                    # After market close, this equals the closing price
+                    rmp = info.get('regularMarketPrice')
+                    if rmp and is_valid_number(rmp):
+                        close_price = float(rmp)
+                        used_info = True
+
+                    # regularMarketPreviousClose or previousClose
+                    pc = info.get('regularMarketPreviousClose') or info.get('previousClose')
+                    if pc and is_valid_number(pc):
+                        prev_close = float(pc)
+
+                    # Sector info (bonus)
+                    if sector == "Unknown":
+                        sector = info.get('sector', 'Unknown')
+            except Exception as e:
+                logger.debug(f"yfinance info failed for {ticker}: {e}")
+
+            # ── Tier 2: Fall back to history() if info didn't work ──
+            if close_price is None:
+                hist = ticker_obj.history(period="5d")
+
+                # .TW → .TWO fallback
+                if (hist is None or hist.empty) and region == 'TPE':
+                    alt_ticker = f"{ticker}.TWO"
+                    logger.info(f"yfinance fallback: {query_ticker} → {alt_ticker}")
+                    await asyncio.sleep(FETCH_DELAY)
+                    ticker_obj = yf.Ticker(alt_ticker, session=session)
+                    hist = ticker_obj.history(period="5d")
+                    if hist is not None and not hist.empty:
+                        query_ticker = alt_ticker
+
+                if hist is None or hist.empty:
+                    logger.warning(f"yfinance: no data for {ticker}")
+                    continue
+
+                valid_data = hist.dropna(subset=['Close'])
+                if valid_data.empty:
+                    continue
+
+                close_price = float(valid_data['Close'].iloc[-1])
+
+                if prev_close is None and len(valid_data) >= 2:
+                    pc = valid_data['Close'].iloc[-2]
+                    if is_valid_number(pc):
+                        prev_close = float(pc)
+
+            if not close_price or not is_valid_number(close_price):
+                logger.warning(f"yfinance: no valid price for {ticker}")
+                continue
+
+            if prev_close is None:
+                prev_close = close_price
 
             results[ticker] = {
                 'current_price': close_price,
@@ -313,7 +351,8 @@ async def _fetch_via_yfinance(
                 'region': region,
             }
 
-            logger.info(f"  yfinance: {ticker}: close={close_price}, prev_close={prev_close}")
+            source_tag = "info" if used_info else "history"
+            logger.info(f"  yfinance({source_tag}): {ticker}: close={close_price}, prev_close={prev_close}")
 
         except Exception as e:
             logger.error(f"yfinance error for {ticker}: {e}")

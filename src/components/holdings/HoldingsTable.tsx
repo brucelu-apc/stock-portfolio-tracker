@@ -225,14 +225,30 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
           {group.marketValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
         </Td>
         <Td isNumeric>
-          <VStack align="end" spacing={0}>
-            <Text color={isProfit ? 'red.500' : isLoss ? 'green.500' : 'black'} fontWeight="bold">
-              {isProfit ? '+' : ''}{group.unrealizedPnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-            </Text>
-            <Text fontSize="xs" color={isProfit ? 'red.500' : isLoss ? 'green.500' : 'black'}>
-              {isProfit ? '+' : ''}{group.roi.toFixed(2)}%
-            </Text>
-          </VStack>
+          <Tooltip
+            label={
+              group.region === 'TPE'
+                ? `持有成本: ${group.totalCost.toLocaleString(undefined, { maximumFractionDigits: 0 })}\n` +
+                  `├ 買進手續費: ${group.totalBuyFee.toLocaleString(undefined, { maximumFractionDigits: 0 })}\n` +
+                  `預估賣出成本: ${group.estimatedSellCost.toLocaleString(undefined, { maximumFractionDigits: 0 })}\n` +
+                  `├ 賣出手續費: ${group.estimatedSellCommission.toLocaleString(undefined, { maximumFractionDigits: 0 })}\n` +
+                  `└ 證交稅: ${group.estimatedSellTax.toLocaleString(undefined, { maximumFractionDigits: 0 })}\n` +
+                  `預估淨收入: ${group.estimatedNetProceeds.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+                : `持有成本: ${group.totalCost.toLocaleString(undefined, { maximumFractionDigits: 0 })} TWD`
+            }
+            whiteSpace="pre-line"
+            fontSize="xs"
+            placement="left"
+          >
+            <VStack align="end" spacing={0}>
+              <Text color={isProfit ? 'red.500' : isLoss ? 'green.500' : 'black'} fontWeight="bold">
+                {isProfit ? '+' : ''}{group.unrealizedPnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </Text>
+              <Text fontSize="xs" color={isProfit ? 'red.500' : isLoss ? 'green.500' : 'black'}>
+                {isProfit ? '+' : ''}{group.roi.toFixed(2)}%
+              </Text>
+            </VStack>
+          </Tooltip>
         </Td>
         <Td isNumeric>
           <VStack align="end" spacing={0} fontSize="xs">
