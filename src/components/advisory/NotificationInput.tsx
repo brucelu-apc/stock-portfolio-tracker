@@ -18,11 +18,13 @@ import {
   Alert,
   AlertIcon,
   useToast,
+  useDisclosure,
   Flex,
   Badge,
 } from '@chakra-ui/react'
 import { parseNotification, type ParseResponse } from '../../services/backend'
 import { ParsePreview } from './ParsePreview'
+import { StockForwardModal } from './StockForwardModal'
 
 interface NotificationInputProps {
   userId: string
@@ -35,6 +37,7 @@ export const NotificationInput = ({ userId, onImportSuccess }: NotificationInput
   const [parseResult, setParseResult] = useState<ParseResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const toast = useToast()
+  const manageModal = useDisclosure()
 
   const handleParse = async () => {
     if (!text.trim()) {
@@ -140,7 +143,7 @@ export const NotificationInput = ({ userId, onImportSuccess }: NotificationInput
           mb={4}
         />
 
-        <HStack spacing={3}>
+        <HStack spacing={3} flexWrap="wrap">
           <Button
             colorScheme="blue"
             onClick={handleParse}
@@ -152,6 +155,14 @@ export const NotificationInput = ({ userId, onImportSuccess }: NotificationInput
             _hover={{ bgGradient: "linear(to-r, brand.600, brand.900)" }}
           >
             解析通知
+          </Button>
+          <Button
+            variant="outline"
+            colorScheme="green"
+            onClick={manageModal.onOpen}
+            rounded="xl"
+          >
+            📋 編輯轉發清單
           </Button>
           <Button
             variant="ghost"
@@ -181,6 +192,15 @@ export const NotificationInput = ({ userId, onImportSuccess }: NotificationInput
           onImportDone={handleImportDone}
         />
       )}
+
+      {/* Forward List Management Modal (accessible without parse results) */}
+      <StockForwardModal
+        isOpen={manageModal.isOpen}
+        onClose={manageModal.onClose}
+        stocks={[]}
+        userId={userId}
+        initialMode="manage"
+      />
     </VStack>
   )
 }
