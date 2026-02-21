@@ -2,21 +2,30 @@
 Stock Monitor — APScheduler-based orchestrator.
 =================================================
 
-Manages three scheduled tasks:
-  1. realtime_tw_monitor:  Every 30s during TW market hours (twstock)
-  2. daily_tw_close:       14:05 TST (yfinance Taiwan close)
-  3. daily_us_close:       05:30 TST (yfinance US close + FX)
+Manages scheduled tasks and the QuoteManager (real-time WS feeds):
 
-Each cycle:
-  1. Fetch prices (twstock or yfinance)
-  2. Update market_data in Supabase
-  3. Check advisory alerts (defense/target)
-  4. Check portfolio alerts (TP/SL)
-  5. Record triggered alerts in price_alerts
-  6. Push notifications (Phase 3-4: LINE/Telegram)
+  Scheduled tasks (APScheduler):
+    1. alert_check:          Every 30s — reads market_data, checks alerts
+    2. realtime_tw_fallback: Every 30s — twstock polling (only when Fugle disabled)
+    3. daily_tw_close:       14:05 TST — yfinance Taiwan close
+    4. daily_us_close:       06:30 TST — yfinance US close + FX
+    5. monthly_report:       1st of month, 14:30 TST
+
+  Real-time feeds (QuoteManager):
+    Phase 1: Fugle WebSocket  (Taiwan stocks)
+    Phase 2: Finnhub WS + Polygon REST (US stocks)
+    Phase 3: Shioaji           (broker-grade Taiwan, optional)
+
+Each alert-check cycle:
+  1. Read current prices from market_data (already updated by WS/polling)
+  2. Check advisory alerts (defense/target)
+  3. Check portfolio alerts (TP/SL)
+  4. Record triggered alerts in price_alerts
+  5. Push notifications (LINE/Telegram)
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Optional
@@ -39,33 +48,62 @@ from app.monitor.price_checker import (
 logger = logging.getLogger(__name__)
 TST = ZoneInfo("Asia/Taipei")
 
-# Global scheduler instance
+# Global instances
 scheduler: Optional[AsyncIOScheduler] = None
-
-# Supabase client reference (set during init)
+_quote_manager = None   # QuoteManager (Phase 1+)
 _supabase = None
 
 
 async def init_monitor(supabase_client):
-    """Initialize the stock monitor with scheduler and Supabase client."""
-    global scheduler, _supabase
+    """Initialize the stock monitor with scheduler, QuoteManager, and Supabase."""
+    global scheduler, _supabase, _quote_manager
     _supabase = supabase_client
     settings = get_settings()
 
-    scheduler = AsyncIOScheduler(timezone=TST)
+    # ── QuoteManager (real-time WebSocket feeds) ──
+    fugle_enabled = getattr(settings, "FUGLE_ENABLED", False)
+    finnhub_enabled = getattr(settings, "FINNHUB_ENABLED", False)
+    shioaji_enabled = getattr(settings, "SHIOAJI_ENABLED", False)
+    any_ws_enabled = fugle_enabled or finnhub_enabled or shioaji_enabled
 
-    # ── Job 1: Real-time Taiwan stock monitoring ──
+    if any_ws_enabled:
+        from app.market.quote_manager import QuoteManager
+
+        loop = asyncio.get_event_loop()
+        _quote_manager = QuoteManager(supabase_client, loop=loop)
+        await _quote_manager.start()
+        logger.info("QuoteManager started (WS feeds active)")
+
+    # ── APScheduler ──
+    scheduler = AsyncIOScheduler(timezone=TST)
     interval_seconds = settings.MONITOR_INTERVAL_SECONDS
+
+    # Job 1: Alert checking — runs every 30s, reads from market_data
+    # This replaces the old "fetch + check" cycle when WS is active.
     scheduler.add_job(
-        realtime_tw_monitor,
+        alert_check,
         IntervalTrigger(seconds=interval_seconds, timezone=TST),
-        id='realtime_tw_monitor',
-        name='Taiwan Real-time Monitor',
+        id='alert_check',
+        name='Alert Check (from market_data)',
         replace_existing=True,
         max_instances=1,
     )
 
-    # ── Job 2: Taiwan market close update ──
+    # Job 2: twstock polling fallback — only when Fugle/Shioaji are DISABLED
+    if not fugle_enabled and not shioaji_enabled:
+        scheduler.add_job(
+            realtime_tw_monitor,
+            IntervalTrigger(seconds=interval_seconds, timezone=TST),
+            id='realtime_tw_fallback',
+            name='Taiwan Real-time Fallback (twstock)',
+            replace_existing=True,
+            max_instances=1,
+        )
+        logger.info("twstock polling active (Fugle/Shioaji disabled)")
+    else:
+        logger.info("twstock polling skipped (WS feed handles real-time)")
+
+    # Job 3: Taiwan market close update
     scheduler.add_job(
         daily_tw_close,
         CronTrigger(hour=14, minute=5, timezone=TST),
@@ -74,10 +112,7 @@ async def init_monitor(supabase_client):
         replace_existing=True,
     )
 
-    # ── Job 3: US market close + FX update ──
-    # Run at 06:30 TST (not 05:30) to ensure yfinance has finalized close data.
-    # US market closes at 4 PM ET = ~05:00 TST (EST) / ~04:00 TST (EDT).
-    # yfinance's history() API may need 30-60 min to include the latest close.
+    # Job 4: US market close + FX update
     scheduler.add_job(
         daily_us_close,
         CronTrigger(hour=6, minute=30, timezone=TST),
@@ -86,7 +121,7 @@ async def init_monitor(supabase_client):
         replace_existing=True,
     )
 
-    # ── Job 4: Monthly report (1st of each month, 14:30 TST) ──
+    # Job 5: Monthly report (1st of each month, 14:30 TST)
     scheduler.add_job(
         monthly_report_job,
         CronTrigger(day=1, hour=14, minute=30, timezone=TST),
@@ -96,18 +131,55 @@ async def init_monitor(supabase_client):
     )
 
     scheduler.start()
-    logger.info(f"Stock monitor started (interval={interval_seconds}s)")
+    logger.info(f"Stock monitor started (alert_check interval={interval_seconds}s)")
 
 
 async def shutdown_monitor():
-    """Gracefully shutdown the scheduler."""
-    global scheduler
+    """Gracefully shutdown the scheduler and QuoteManager."""
+    global scheduler, _quote_manager
+    if _quote_manager:
+        await _quote_manager.stop()
+        logger.info("QuoteManager stopped")
     if scheduler:
         scheduler.shutdown(wait=False)
         logger.info("Stock monitor stopped")
 
 
 # ─── Scheduled Jobs ───────────────────────────────────────────
+
+async def alert_check():
+    """
+    Periodic alert checking (every 30s during market hours).
+
+    Reads current prices from the ``market_data`` table (already updated
+    by WebSocket feeds or twstock polling) and runs the alert pipeline.
+    This decouples alert-checking from price-fetching.
+    """
+    if not is_market_open():
+        return
+
+    try:
+        # Read current prices from market_data for all TPE tickers
+        res = _supabase.table("market_data") \
+            .select("ticker, current_price") \
+            .eq("region", "TPE") \
+            .execute()
+
+        current_prices = {}
+        for row in res.data:
+            ticker = row.get("ticker", "")
+            price = row.get("current_price")
+            if ticker and price and float(price) > 0:
+                current_prices[ticker] = float(price)
+
+        if not current_prices:
+            return
+
+        await _process_alerts(current_prices)
+
+    except Exception as e:
+        logger.error(f"Alert check error: {e}", exc_info=True)
+
 
 async def realtime_tw_monitor():
     """
@@ -553,8 +625,14 @@ def get_monitor_status() -> dict:
             "next_run": str(job.next_run_time) if job.next_run_time else None,
         })
 
-    return {
+    status = {
         "running": scheduler.running,
         "market_open": is_market_open(),
         "jobs": jobs,
     }
+
+    # Include QuoteManager health if active
+    if _quote_manager:
+        status["quote_manager"] = _quote_manager.health()
+
+    return status

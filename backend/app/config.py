@@ -29,6 +29,24 @@ class Settings(BaseSettings):
     MARKET_OPEN_TIME: str = "09:00"
     MARKET_CLOSE_TIME: str = "13:30"
 
+    # --- Fugle MarketData (Phase 1: Taiwan real-time WS) ---
+    FUGLE_API_KEY: str = ""
+    FUGLE_ENABLED: bool = False
+    FUGLE_RECONNECT_MAX_DELAY: int = 60  # seconds
+
+    # --- Finnhub (Phase 2: US real-time WS) ---
+    FINNHUB_API_KEY: str = ""
+    FINNHUB_ENABLED: bool = False
+
+    # --- Polygon.io / Massive.com (Phase 2: US fallback REST) ---
+    POLYGON_API_KEY: str = ""
+    POLYGON_ENABLED: bool = False
+
+    # --- Shioaji (Phase 3: broker-grade Taiwan quotes) ---
+    SHIOAJI_API_KEY: str = ""
+    SHIOAJI_SECRET_KEY: str = ""
+    SHIOAJI_ENABLED: bool = False
+
     # --- CORS ---
     FRONTEND_URL: str = "http://localhost:5173"
 

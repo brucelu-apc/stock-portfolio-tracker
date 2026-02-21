@@ -12,6 +12,12 @@ httpx==0.28.1
 twstock==1.3.1
 yfinance==0.2.50
 
+# === Real-time Quote Feeds ===
+fugle-marketdata>=1.0.0       # Phase 1: Fugle WebSocket (Taiwan stocks)
+websocket-client>=1.6.0       # Phase 2: Finnhub WebSocket (US stocks)
+# finnhub-python>=2.4.0       # Optional: Finnhub REST client (not required for WS)
+# shioaji>=1.0.0              # Phase 3: Sinopac broker API (optional, large dep)
+
 # === Scheduling ===
 apscheduler==3.10.4
 
