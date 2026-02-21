@@ -174,8 +174,7 @@ class FugleWSClient:
         self._client = WebSocketClient(api_key=self._api_key)
         self._stock = self._client.stock
 
-        # ── Event handlers ──
-        @self._stock.on("connect")
+        # ── Event handlers (SDK uses .on(event, listener), NOT decorators) ──
         def _on_connect():
             self._connected = True
             self._reconnect_delay = RECONNECT_BASE_DELAY  # reset backoff
@@ -187,22 +186,24 @@ class FugleWSClient:
             if pending:
                 self.subscribe(pending)
 
-        @self._stock.on("message")
         def _on_message(message: dict):
             self._last_message_at = datetime.now(TST)
             self._message_count += 1
             self._handle_message(message)
 
-        @self._stock.on("disconnect")
         def _on_disconnect(code, reason):
             self._connected = False
             logger.warning(f"Fugle WS disconnected: code={code} reason={reason}")
             if self._should_run:
                 self._schedule_reconnect()
 
-        @self._stock.on("error")
         def _on_error(error):
             logger.error(f"Fugle WS error: {error}")
+
+        self._stock.on("connect", _on_connect)
+        self._stock.on("message", _on_message)
+        self._stock.on("disconnect", _on_disconnect)
+        self._stock.on("error", _on_error)
 
         # Start connection (runs on SDK's internal thread)
         try:
