@@ -37,11 +37,15 @@ class DynamicSubscription:
         supabase_client,
         on_subscribe: Callable[[list[str]], None],
         on_unsubscribe: Callable[[list[str]], None],
+        on_subscribe_us: Optional[Callable[[list[str]], None]] = None,
+        on_unsubscribe_us: Optional[Callable[[list[str]], None]] = None,
         scan_interval: int = SCAN_INTERVAL,
     ):
         self._supabase = supabase_client
         self._on_subscribe = on_subscribe
         self._on_unsubscribe = on_unsubscribe
+        self._on_subscribe_us = on_subscribe_us
+        self._on_unsubscribe_us = on_unsubscribe_us
         self._scan_interval = scan_interval
 
         self._current_tw: Set[str] = set()
@@ -150,17 +154,27 @@ class DynamicSubscription:
 
         self._current_tw = tw_tickers
 
-        # ── Store US tickers (Phase 2 will use these) ──
-        # For now just track the set; QuoteManager will read it
-        # when Finnhub/Polygon clients are added.
-        if us_tickers != self._current_us:
-            added_us = us_tickers - self._current_us
-            removed_us = self._current_us - us_tickers
-            if added_us:
-                logger.info(f"New US tickers detected: {added_us}")
-            if removed_us:
-                logger.info(f"US tickers removed: {removed_us}")
-            self._current_us = us_tickers
+        # ── Reconcile US tickers ──
+        new_us = us_tickers - self._current_us
+        removed_us = self._current_us - us_tickers
+
+        if new_us:
+            logger.info(f"New US tickers to subscribe: {new_us}")
+            if self._on_subscribe_us:
+                try:
+                    self._on_subscribe_us(list(new_us))
+                except Exception as e:
+                    logger.error(f"US subscribe callback error: {e}")
+
+        if removed_us:
+            logger.info(f"US tickers to unsubscribe: {removed_us}")
+            if self._on_unsubscribe_us:
+                try:
+                    self._on_unsubscribe_us(list(removed_us))
+                except Exception as e:
+                    logger.error(f"US unsubscribe callback error: {e}")
+
+        self._current_us = us_tickers
 
         logger.debug(
             f"DynamicSubscription scan: "

@@ -110,6 +110,8 @@ class QuoteManager:
             supabase_client=self._supabase,
             on_subscribe=self._handle_subscribe,
             on_unsubscribe=self._handle_unsubscribe,
+            on_subscribe_us=self._handle_subscribe_us,
+            on_unsubscribe_us=self._handle_unsubscribe_us,
         )
         await self._subscription.start()
 
@@ -263,7 +265,7 @@ class QuoteManager:
     # ── Subscription callbacks ──────────────────────────────────
 
     def _handle_subscribe(self, tickers: list[str]) -> None:
-        """Called by DynamicSubscription when new tickers appear."""
+        """Called by DynamicSubscription when new TW tickers appear."""
         # Phase 3 takes priority for TW tickers if available
         if self._shioaji_client and self._shioaji_client.is_connected:
             self._shioaji_client.subscribe(tickers)
@@ -271,8 +273,18 @@ class QuoteManager:
             self._fugle_client.subscribe(tickers)
 
     def _handle_unsubscribe(self, tickers: list[str]) -> None:
-        """Called by DynamicSubscription when tickers are removed."""
+        """Called by DynamicSubscription when TW tickers are removed."""
         if self._shioaji_client:
             self._shioaji_client.unsubscribe(tickers)
         if self._fugle_client:
             self._fugle_client.unsubscribe(tickers)
+
+    def _handle_subscribe_us(self, tickers: list[str]) -> None:
+        """Called by DynamicSubscription when new US tickers appear."""
+        if self._finnhub_client:
+            self._finnhub_client.subscribe(tickers)
+
+    def _handle_unsubscribe_us(self, tickers: list[str]) -> None:
+        """Called by DynamicSubscription when US tickers are removed."""
+        if self._finnhub_client:
+            self._finnhub_client.unsubscribe(tickers)
