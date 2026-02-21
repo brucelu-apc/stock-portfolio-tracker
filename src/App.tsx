@@ -407,7 +407,7 @@ function App() {
               />
             </Box>
             <Box mb={6}>
-              <AdvisoryHistory userId={session.user.id} />
+              <AdvisoryHistory userId={session.user.id} role={profile?.role} />
             </Box>
           </motion.div>
         )

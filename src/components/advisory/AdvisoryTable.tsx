@@ -51,6 +51,7 @@ import { useRealtimeSubscription } from '../../hooks/useRealtimeSubscription'
 interface PriceTarget {
   id: string
   ticker: string
+  stock_name?: string | null
   defense_price: number | null
   min_target_low: number | null
   min_target_high: number | null
@@ -362,6 +363,11 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
                               </Tooltip>
                             )}
                           </HStack>
+                          {target.stock_name && (
+                            <Text fontSize="xs" color="gray.500" noOfLines={1}>
+                              {target.stock_name}
+                            </Text>
+                          )}
                         </VStack>
                       </HStack>
                     </Td>

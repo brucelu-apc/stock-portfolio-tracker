@@ -6,12 +6,16 @@
  *  2. Target Archive — Past price targets (is_latest = false)
  *  3. Forward Logs — History of forwarded stock messages
  *
+ * Features:
+ *  - Stock name display alongside ticker codes
+ *  - Admin bulk delete with checkbox selection + confirmation
+ *
  * Data sources:
  *  - price_alerts (triggered_at DESC, with type/ticker filters)
- *  - price_targets (is_latest = false for archived targets)
+ *  - price_targets (is_latest = false for archived targets; also used for name lookup)
  *  - forward_logs (with forward_targets join for names)
  */
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Box,
   VStack,
@@ -39,7 +43,18 @@ import {
   TableContainer,
   Tag,
   TagLabel,
+  Checkbox,
+  Button,
+  AlertDialog,
+  AlertDialogBody,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogContent,
+  AlertDialogOverlay,
+  useDisclosure,
+  useToast,
 } from '@chakra-ui/react'
+import { DeleteIcon } from '@chakra-ui/icons'
 import { supabase } from '../../services/supabase'
 
 // ─── Types ──────────────────────────────────────────────────
@@ -58,6 +73,7 @@ interface AlertRecord {
 interface ArchivedTarget {
   id: string
   ticker: string
+  stock_name?: string | null
   defense_price: number | null
   min_target_low: number | null
   min_target_high: number | null
@@ -113,15 +129,28 @@ function formatDateTime(ts: string): string {
 
 interface AdvisoryHistoryProps {
   userId: string
+  role?: string
 }
 
-export const AdvisoryHistory = ({ userId: _userId }: AdvisoryHistoryProps) => {
+export const AdvisoryHistory = ({ userId: _userId, role }: AdvisoryHistoryProps) => {
+  const toast = useToast()
   const [alerts, setAlerts] = useState<AlertRecord[]>([])
   const [archived, setArchived] = useState<ArchivedTarget[]>([])
   const [forwardLogs, setForwardLogs] = useState<ForwardLog[]>([])
+  const [nameMap, setNameMap] = useState<Record<string, string>>({})
   const [isLoading, setIsLoading] = useState(true)
   const [alertFilter, setAlertFilter] = useState('all')
   const [period, setPeriod] = useState('30')
+
+  // Admin bulk-delete state
+  const isAdmin = role === 'admin'
+  const [selectedAlerts, setSelectedAlerts] = useState<Set<string>>(new Set())
+  const [selectedArchived, setSelectedArchived] = useState<Set<string>>(new Set())
+  const [selectedLogs, setSelectedLogs] = useState<Set<string>>(new Set())
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<'alerts' | 'archived' | 'logs' | null>(null)
+  const { isOpen: isDeleteOpen, onOpen: onDeleteOpen, onClose: onDeleteClose } = useDisclosure()
+  const cancelRef = useRef<HTMLButtonElement>(null)
 
   // ── Fetch all history data ──
 
@@ -134,7 +163,7 @@ export const AdvisoryHistory = ({ userId: _userId }: AdvisoryHistoryProps) => {
     const sinceStr = since.toISOString()
 
     try {
-      const [alertsRes, archivedRes, logsRes] = await Promise.all([
+      const [alertsRes, archivedRes, logsRes, namesRes] = await Promise.all([
         // Alert history
         supabase
           .from('price_alerts')
@@ -142,10 +171,10 @@ export const AdvisoryHistory = ({ userId: _userId }: AdvisoryHistoryProps) => {
           .gte('triggered_at', sinceStr)
           .order('triggered_at', { ascending: false })
           .limit(100),
-        // Archived price targets
+        // Archived price targets (include stock_name)
         supabase
           .from('price_targets')
-          .select('id, ticker, defense_price, min_target_low, min_target_high, reasonable_target_low, reasonable_target_high, effective_date, created_at')
+          .select('id, ticker, stock_name, defense_price, min_target_low, min_target_high, reasonable_target_low, reasonable_target_high, effective_date, created_at')
           .eq('is_latest', false)
           .order('created_at', { ascending: false })
           .limit(50),
@@ -156,11 +185,28 @@ export const AdvisoryHistory = ({ userId: _userId }: AdvisoryHistoryProps) => {
           .gte('forwarded_at', sinceStr)
           .order('forwarded_at', { ascending: false })
           .limit(50),
+        // Name lookup: fetch all price_targets (both latest & archived) for ticker→name mapping
+        supabase
+          .from('price_targets')
+          .select('ticker, stock_name')
+          .not('stock_name', 'is', null)
+          .order('created_at', { ascending: false }),
       ])
 
       if (alertsRes.data) setAlerts(alertsRes.data)
       if (archivedRes.data) setArchived(archivedRes.data)
       if (logsRes.data) setForwardLogs(logsRes.data)
+
+      // Build ticker → name map (latest name wins due to DESC ordering)
+      if (namesRes.data) {
+        const map: Record<string, string> = {}
+        namesRes.data.forEach((row: any) => {
+          if (row.stock_name && !map[row.ticker]) {
+            map[row.ticker] = row.stock_name
+          }
+        })
+        setNameMap(map)
+      }
     } catch (err) {
       console.error('History fetch error:', err)
     } finally {
@@ -171,6 +217,13 @@ export const AdvisoryHistory = ({ userId: _userId }: AdvisoryHistoryProps) => {
   useEffect(() => {
     fetchHistory()
   }, [fetchHistory])
+
+  // Clear selections when data refreshes
+  useEffect(() => {
+    setSelectedAlerts(new Set())
+    setSelectedArchived(new Set())
+    setSelectedLogs(new Set())
+  }, [alerts, archived, forwardLogs])
 
   // ── Statistics ──
 
@@ -187,6 +240,116 @@ export const AdvisoryHistory = ({ userId: _userId }: AdvisoryHistoryProps) => {
     alertFilter === 'all'
       ? alerts
       : alerts.filter((a) => a.alert_type === alertFilter)
+
+  // ── Selection helpers ──
+
+  const toggleSelection = (
+    set: Set<string>,
+    setter: React.Dispatch<React.SetStateAction<Set<string>>>,
+    id: string
+  ) => {
+    const next = new Set(set)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    setter(next)
+  }
+
+  const toggleSelectAll = (
+    items: { id: string }[],
+    set: Set<string>,
+    setter: React.Dispatch<React.SetStateAction<Set<string>>>
+  ) => {
+    if (set.size === items.length) {
+      setter(new Set())
+    } else {
+      setter(new Set(items.map((i) => i.id)))
+    }
+  }
+
+  // ── Bulk delete ──
+
+  const currentDeleteCount = useMemo(() => {
+    if (deleteTarget === 'alerts') return selectedAlerts.size
+    if (deleteTarget === 'archived') return selectedArchived.size
+    if (deleteTarget === 'logs') return selectedLogs.size
+    return 0
+  }, [deleteTarget, selectedAlerts, selectedArchived, selectedLogs])
+
+  const deleteTableName = useMemo(() => {
+    if (deleteTarget === 'alerts') return '警示紀錄'
+    if (deleteTarget === 'archived') return '已歸檔標的'
+    if (deleteTarget === 'logs') return '轉發紀錄'
+    return ''
+  }, [deleteTarget])
+
+  const handleDeleteConfirm = async () => {
+    setIsDeleting(true)
+    try {
+      let ids: string[] = []
+      let table = ''
+
+      if (deleteTarget === 'alerts') {
+        ids = Array.from(selectedAlerts)
+        table = 'price_alerts'
+      } else if (deleteTarget === 'archived') {
+        ids = Array.from(selectedArchived)
+        table = 'price_targets'
+      } else if (deleteTarget === 'logs') {
+        ids = Array.from(selectedLogs)
+        table = 'forward_logs'
+      }
+
+      if (ids.length === 0 || !table) return
+
+      const { error } = await supabase
+        .from(table)
+        .delete()
+        .in('id', ids)
+
+      if (error) {
+        toast({
+          title: '刪除失敗',
+          description: error.message,
+          status: 'error',
+          duration: 4000,
+        })
+      } else {
+        toast({
+          title: '刪除成功',
+          description: `已刪除 ${ids.length} 筆${deleteTableName}`,
+          status: 'success',
+          duration: 3000,
+        })
+        // Refresh data
+        fetchHistory()
+      }
+    } catch (err) {
+      console.error('Delete error:', err)
+      toast({ title: '刪除時發生錯誤', status: 'error', duration: 3000 })
+    } finally {
+      setIsDeleting(false)
+      onDeleteClose()
+    }
+  }
+
+  const openDeleteDialog = (target: 'alerts' | 'archived' | 'logs') => {
+    setDeleteTarget(target)
+    onDeleteOpen()
+  }
+
+  // ── Render helper: stock name display ──
+
+  const renderTickerName = (ticker: string, stockName?: string | null) => {
+    const name = stockName || nameMap[ticker]
+    return (
+      <VStack align="start" spacing={0}>
+        <Text fontWeight="bold" fontSize="sm">{ticker}</Text>
+        {name && (
+          <Text fontSize="xs" color="gray.500" noOfLines={1}>{name}</Text>
+        )}
+      </VStack>
+    )
+  }
 
   // ── Render ──
 
@@ -285,7 +448,20 @@ export const AdvisoryHistory = ({ userId: _userId }: AdvisoryHistoryProps) => {
           <TabPanels>
             {/* ─── Tab 1: Alert History ─── */}
             <TabPanel px={0}>
-              <Flex mb={3} justify="flex-end">
+              <Flex mb={3} justify="space-between" align="center">
+                {isAdmin && selectedAlerts.size > 0 ? (
+                  <Button
+                    size="xs"
+                    colorScheme="red"
+                    leftIcon={<DeleteIcon />}
+                    rounded="lg"
+                    onClick={() => openDeleteDialog('alerts')}
+                  >
+                    刪除 {selectedAlerts.size} 筆
+                  </Button>
+                ) : (
+                  <Box />
+                )}
                 <Select
                   size="xs"
                   rounded="lg"
@@ -313,6 +489,17 @@ export const AdvisoryHistory = ({ userId: _userId }: AdvisoryHistoryProps) => {
                   <Table variant="simple" size="sm">
                     <Thead bg="gray.50" position="sticky" top={0} zIndex={1}>
                       <Tr>
+                        {isAdmin && (
+                          <Th w="40px" px={2}>
+                            <Checkbox
+                              isChecked={selectedAlerts.size === filteredAlerts.length && filteredAlerts.length > 0}
+                              isIndeterminate={selectedAlerts.size > 0 && selectedAlerts.size < filteredAlerts.length}
+                              onChange={() => toggleSelectAll(filteredAlerts, selectedAlerts, setSelectedAlerts)}
+                              colorScheme="red"
+                              size="sm"
+                            />
+                          </Th>
+                        )}
                         <Th>時間</Th>
                         <Th>股票</Th>
                         <Th>類型</Th>
@@ -326,13 +513,21 @@ export const AdvisoryHistory = ({ userId: _userId }: AdvisoryHistoryProps) => {
                         const cfg = ALERT_CONFIG[alert.alert_type] || ALERT_CONFIG.defense_breach
                         return (
                           <Tr key={alert.id} _hover={{ bg: 'gray.50' }}>
+                            {isAdmin && (
+                              <Td px={2}>
+                                <Checkbox
+                                  isChecked={selectedAlerts.has(alert.id)}
+                                  onChange={() => toggleSelection(selectedAlerts, setSelectedAlerts, alert.id)}
+                                  colorScheme="red"
+                                  size="sm"
+                                />
+                              </Td>
+                            )}
                             <Td fontSize="xs" color="gray.600" whiteSpace="nowrap">
                               {formatDateTime(alert.triggered_at)}
                             </Td>
                             <Td>
-                              <Text fontWeight="bold" fontSize="sm">
-                                {alert.ticker}
-                              </Text>
+                              {renderTickerName(alert.ticker)}
                             </Td>
                             <Td>
                               <Tag size="sm" colorScheme={cfg.color} rounded="full">
@@ -374,6 +569,19 @@ export const AdvisoryHistory = ({ userId: _userId }: AdvisoryHistoryProps) => {
 
             {/* ─── Tab 2: Archived Targets ─── */}
             <TabPanel px={0}>
+              {isAdmin && selectedArchived.size > 0 && (
+                <Flex mb={3} justify="flex-start">
+                  <Button
+                    size="xs"
+                    colorScheme="red"
+                    leftIcon={<DeleteIcon />}
+                    rounded="lg"
+                    onClick={() => openDeleteDialog('archived')}
+                  >
+                    刪除 {selectedArchived.size} 筆
+                  </Button>
+                </Flex>
+              )}
               {archived.length === 0 ? (
                 <Box py={8} textAlign="center">
                   <Text color="gray.400" fontSize="sm">
@@ -388,6 +596,17 @@ export const AdvisoryHistory = ({ userId: _userId }: AdvisoryHistoryProps) => {
                   <Table variant="simple" size="sm">
                     <Thead bg="gray.50" position="sticky" top={0} zIndex={1}>
                       <Tr>
+                        {isAdmin && (
+                          <Th w="40px" px={2}>
+                            <Checkbox
+                              isChecked={selectedArchived.size === archived.length && archived.length > 0}
+                              isIndeterminate={selectedArchived.size > 0 && selectedArchived.size < archived.length}
+                              onChange={() => toggleSelectAll(archived, selectedArchived, setSelectedArchived)}
+                              colorScheme="red"
+                              size="sm"
+                            />
+                          </Th>
+                        )}
                         <Th>股票</Th>
                         <Th isNumeric>防守價</Th>
                         <Th isNumeric>最小漲幅</Th>
@@ -399,8 +618,18 @@ export const AdvisoryHistory = ({ userId: _userId }: AdvisoryHistoryProps) => {
                     <Tbody>
                       {archived.map((target) => (
                         <Tr key={target.id} _hover={{ bg: 'gray.50' }} opacity={0.75}>
+                          {isAdmin && (
+                            <Td px={2}>
+                              <Checkbox
+                                isChecked={selectedArchived.has(target.id)}
+                                onChange={() => toggleSelection(selectedArchived, setSelectedArchived, target.id)}
+                                colorScheme="red"
+                                size="sm"
+                              />
+                            </Td>
+                          )}
                           <Td>
-                            <Text fontWeight="bold" fontSize="sm">{target.ticker}</Text>
+                            {renderTickerName(target.ticker, target.stock_name)}
                           </Td>
                           <Td isNumeric>
                             {target.defense_price ? (
@@ -447,6 +676,19 @@ export const AdvisoryHistory = ({ userId: _userId }: AdvisoryHistoryProps) => {
 
             {/* ─── Tab 3: Forward Logs ─── */}
             <TabPanel px={0}>
+              {isAdmin && selectedLogs.size > 0 && (
+                <Flex mb={3} justify="flex-start">
+                  <Button
+                    size="xs"
+                    colorScheme="red"
+                    leftIcon={<DeleteIcon />}
+                    rounded="lg"
+                    onClick={() => openDeleteDialog('logs')}
+                  >
+                    刪除 {selectedLogs.size} 筆
+                  </Button>
+                </Flex>
+              )}
               {forwardLogs.length === 0 ? (
                 <Box py={8} textAlign="center">
                   <Text color="gray.400" fontSize="sm">
@@ -465,13 +707,22 @@ export const AdvisoryHistory = ({ userId: _userId }: AdvisoryHistoryProps) => {
                       <Box
                         key={log.id}
                         p={3}
-                        bg="gray.50"
+                        bg={selectedLogs.has(log.id) ? 'red.50' : 'gray.50'}
                         rounded="xl"
                         border="1px solid"
-                        borderColor="gray.100"
+                        borderColor={selectedLogs.has(log.id) ? 'red.200' : 'gray.100'}
+                        transition="all 0.15s"
                       >
                         <Flex justify="space-between" align="start" mb={2}>
                           <HStack spacing={2}>
+                            {isAdmin && (
+                              <Checkbox
+                                isChecked={selectedLogs.has(log.id)}
+                                onChange={() => toggleSelection(selectedLogs, setSelectedLogs, log.id)}
+                                colorScheme="red"
+                                size="sm"
+                              />
+                            )}
                             <Badge
                               colorScheme={platform === 'telegram' ? 'blue' : 'green'}
                               rounded="full"
@@ -498,7 +749,7 @@ export const AdvisoryHistory = ({ userId: _userId }: AdvisoryHistoryProps) => {
                               fontSize="xs"
                               rounded="md"
                             >
-                              {t}
+                              {t}{nameMap[t] ? ` ${nameMap[t]}` : ''}
                             </Badge>
                           ))}
                         </Flex>
@@ -511,6 +762,42 @@ export const AdvisoryHistory = ({ userId: _userId }: AdvisoryHistoryProps) => {
           </TabPanels>
         </Tabs>
       )}
+
+      {/* ─── Delete Confirmation Dialog ─── */}
+      <AlertDialog
+        isOpen={isDeleteOpen}
+        leastDestructiveRef={cancelRef as any}
+        onClose={onDeleteClose}
+        isCentered
+      >
+        <AlertDialogOverlay>
+          <AlertDialogContent rounded="2xl">
+            <AlertDialogHeader fontSize="lg" fontWeight="bold">
+              確認刪除{deleteTableName}
+            </AlertDialogHeader>
+            <AlertDialogBody>
+              確定要刪除選取的 <Text as="span" fontWeight="bold" color="red.500">{currentDeleteCount}</Text> 筆{deleteTableName}嗎？
+              此操作無法復原。
+            </AlertDialogBody>
+            <AlertDialogFooter>
+              <Button ref={cancelRef} onClick={onDeleteClose} rounded="xl" size="sm">
+                取消
+              </Button>
+              <Button
+                colorScheme="red"
+                onClick={handleDeleteConfirm}
+                ml={3}
+                rounded="xl"
+                size="sm"
+                isLoading={isDeleting}
+                leftIcon={<DeleteIcon />}
+              >
+                確認刪除
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialogOverlay>
+      </AlertDialog>
     </Box>
   )
 }

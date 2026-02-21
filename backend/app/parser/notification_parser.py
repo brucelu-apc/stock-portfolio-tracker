@@ -17,6 +17,7 @@ Usage:
 """
 from __future__ import annotations
 
+import logging
 import re
 from typing import Optional
 from fastapi import APIRouter
@@ -31,6 +32,7 @@ from app.models.schemas import (
     ImportResponse,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # ─── Regex patterns ──────────────────────────────────────────
@@ -500,39 +502,167 @@ async def parse_notifications(request: ParseRequest):
 async def import_notifications(request: ImportRequest):
     """
     Parse advisory notification text AND import into Supabase.
-    Phase 1 stub — full implementation when Supabase tables are ready.
+
+    Phase 1.4 — Full implementation. Writes to:
+      1. advisory_notifications (raw message text + type)
+      2. price_targets (defense/min/reasonable/entry, with is_latest versioning)
+      3. advisory_tracking (initial 'watching' status, skip if already tracked)
     """
-    # First, parse the text
+    from datetime import date as date_type
+    from supabase import create_client
+    from app.config import get_settings
+
+    settings = get_settings()
+    if not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_ROLE_KEY:
+        return ImportResponse(
+            success=False,
+            imported_count=0,
+            skipped_count=0,
+            details=[{"ticker": "", "name": "", "action": "error",
+                       "reason": "Supabase credentials not configured"}],
+        )
+
+    supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
+
+    # Step 1: Parse the text
     parsed = parse_notification(request.text)
 
-    # TODO: Phase 1.4 — write to Supabase tables
-    # For now, return a stub response
+    # Determine notification date from parsed dates, fallback to today
+    notification_date = str(date_type.today())
+    if parsed.dates_found:
+        # Use the latest date found (format: "2026/02/10" → "2026-02-10")
+        try:
+            notification_date = parsed.dates_found[-1].replace("/", "-")
+        except Exception:
+            pass
+
     imported = 0
     skipped = 0
     details = []
 
+    # Deduplicate: if same ticker appears in multiple messages, keep the one
+    # with the most complete data (most non-null price fields)
+    best_stocks: dict[str, tuple[ParsedStock, str, str]] = {}  # ticker → (stock, msg_type, raw_text)
+
     for msg in parsed.messages:
         for stock in msg.stocks:
+            # Check if this ticker is in the selected list
             if request.selected_tickers and stock.ticker not in request.selected_tickers:
-                skipped += 1
-                details.append({
-                    "ticker": stock.ticker,
-                    "name": stock.name,
-                    "action": "skipped",
-                    "reason": "not in selected_tickers",
-                })
-            else:
-                imported += 1
-                details.append({
-                    "ticker": stock.ticker,
-                    "name": stock.name,
-                    "action": "imported",
-                    "defense_price": stock.defense_price,
-                    "min_target": f"{stock.min_target_low}~{stock.min_target_high}" if stock.min_target_low else None,
-                })
+                continue
+
+            # Score completeness: count non-null price fields
+            score = sum(1 for v in [
+                stock.defense_price, stock.min_target_low, stock.min_target_high,
+                stock.reasonable_target_low, stock.reasonable_target_high,
+                stock.entry_price,
+            ] if v is not None)
+
+            if stock.ticker not in best_stocks or score > sum(1 for v in [
+                best_stocks[stock.ticker][0].defense_price,
+                best_stocks[stock.ticker][0].min_target_low,
+                best_stocks[stock.ticker][0].min_target_high,
+                best_stocks[stock.ticker][0].reasonable_target_low,
+                best_stocks[stock.ticker][0].reasonable_target_high,
+                best_stocks[stock.ticker][0].entry_price,
+            ] if v is not None):
+                best_stocks[stock.ticker] = (stock, msg.message_type, msg.raw_text)
+
+    # Count skipped tickers
+    all_parsed_tickers = set()
+    for msg in parsed.messages:
+        for stock in msg.stocks:
+            all_parsed_tickers.add(stock.ticker)
+
+    for ticker in all_parsed_tickers:
+        if request.selected_tickers and ticker not in request.selected_tickers:
+            skipped += 1
+            # Find the stock name
+            name = ""
+            for msg in parsed.messages:
+                for s in msg.stocks:
+                    if s.ticker == ticker:
+                        name = s.name
+                        break
+            details.append({
+                "ticker": ticker,
+                "name": name,
+                "action": "skipped",
+                "reason": "not in selected_tickers",
+            })
+
+    # Step 2: Write to Supabase for each selected stock
+    for ticker, (stock, msg_type, raw_text) in best_stocks.items():
+        try:
+            # 2a. Insert advisory_notifications (raw record)
+            notif_res = supabase.table("advisory_notifications").insert({
+                "user_id": request.user_id,
+                "notification_date": notification_date,
+                "message_type": msg_type,
+                "raw_text": raw_text[:2000],
+                "source": request.source.value if hasattr(request.source, 'value') else str(request.source),
+            }).execute()
+
+            notification_id = None
+            if notif_res.data and len(notif_res.data) > 0:
+                notification_id = notif_res.data[0].get("id")
+
+            # 2b. Retire old price_targets (set is_latest = false)
+            supabase.table("price_targets").update({
+                "is_latest": False,
+            }).eq("user_id", request.user_id).eq("ticker", ticker).eq("is_latest", True).execute()
+
+            # 2c. Insert new price_target with is_latest = true
+            target_data = {
+                "user_id": request.user_id,
+                "ticker": ticker,
+                "stock_name": stock.name or "",
+                "notification_id": notification_id,
+                "defense_price": stock.defense_price,
+                "min_target_low": stock.min_target_low,
+                "min_target_high": stock.min_target_high,
+                "reasonable_target_low": stock.reasonable_target_low,
+                "reasonable_target_high": stock.reasonable_target_high,
+                "entry_price": stock.entry_price,
+                "strategy_notes": stock.strategy_notes or "",
+                "effective_date": notification_date,
+                "is_latest": True,
+            }
+            supabase.table("price_targets").insert(target_data).execute()
+
+            # 2d. UPSERT advisory_tracking (initial 'watching', don't overwrite existing)
+            #     Use onConflict with ignoreDuplicates to skip if already tracked
+            supabase.table("advisory_tracking").upsert(
+                {
+                    "user_id": request.user_id,
+                    "ticker": ticker,
+                    "tracking_status": "watching",
+                },
+                on_conflict="user_id,ticker",
+                ignore_duplicates=True,
+            ).execute()
+
+            imported += 1
+            details.append({
+                "ticker": ticker,
+                "name": stock.name,
+                "action": "imported",
+                "defense_price": stock.defense_price,
+                "min_target": f"{stock.min_target_low}~{stock.min_target_high}"
+                    if stock.min_target_low else None,
+            })
+            logger.info(f"Imported {stock.name}({ticker}) — defense={stock.defense_price}")
+
+        except Exception as e:
+            logger.error(f"Failed to import {ticker}: {e}")
+            details.append({
+                "ticker": ticker,
+                "name": stock.name,
+                "action": "error",
+                "reason": str(e)[:200],
+            })
 
     return ImportResponse(
-        success=True,
+        success=imported > 0 or skipped > 0,
         imported_count=imported,
         skipped_count=skipped,
         details=details,
