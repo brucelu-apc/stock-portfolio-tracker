@@ -82,11 +82,10 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
   const isLoss = group.unrealizedPnl < -0.001
   const latestItem = group.items[0]
 
-  // Weighted Avg Price Color
+  // Weighted Avg Price Color — TW convention: red=profit, green=loss
   const getAvgCostColor = () => {
-    if (!marketData[group.ticker]?.current_price) return 'black'
-    if (group.avgCost > group.currentPrice) return 'red.500'
-    if (group.avgCost < group.currentPrice) return 'green.500'
+    if (group.avgCost < group.currentPrice) return 'red.500'    // 獲利 (成本低於現價)
+    if (group.avgCost > group.currentPrice) return 'green.500'  // 虧損 (成本高於現價)
     return 'black'
   }
 
