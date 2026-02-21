@@ -163,7 +163,7 @@ export const AdvisoryHistory = ({ userId: _userId, role }: AdvisoryHistoryProps)
     const sinceStr = since.toISOString()
 
     try {
-      const [alertsRes, archivedRes, logsRes, namesRes] = await Promise.all([
+      const [alertsRes, archivedRes, logsRes, namesRes, holdingsRes] = await Promise.all([
         // Alert history
         supabase
           .from('price_alerts')
@@ -191,22 +191,32 @@ export const AdvisoryHistory = ({ userId: _userId, role }: AdvisoryHistoryProps)
           .select('ticker, stock_name')
           .not('stock_name', 'is', null)
           .order('created_at', { ascending: false }),
+        // Fallback name lookup: from portfolio_holdings
+        supabase
+          .from('portfolio_holdings')
+          .select('ticker, name'),
       ])
 
       if (alertsRes.data) setAlerts(alertsRes.data)
       if (archivedRes.data) setArchived(archivedRes.data)
       if (logsRes.data) setForwardLogs(logsRes.data)
 
-      // Build ticker → name map (latest name wins due to DESC ordering)
-      if (namesRes.data) {
-        const map: Record<string, string> = {}
-        namesRes.data.forEach((row: any) => {
-          if (row.stock_name && !map[row.ticker]) {
-            map[row.ticker] = row.stock_name
-          }
+      // Build ticker → name map
+      // Priority: price_targets.stock_name > portfolio_holdings.name
+      const map: Record<string, string> = {}
+      // 1. Fallback: portfolio_holdings names (lower priority, loaded first so they get overwritten)
+      if (holdingsRes.data) {
+        holdingsRes.data.forEach((row: any) => {
+          if (row.name && row.ticker) map[row.ticker] = row.name
         })
-        setNameMap(map)
       }
+      // 2. Primary: price_targets stock_name (higher priority, overwrites holdings)
+      if (namesRes.data) {
+        namesRes.data.forEach((row: any) => {
+          if (row.stock_name) map[row.ticker] = row.stock_name
+        })
+      }
+      setNameMap(map)
     } catch (err) {
       console.error('History fetch error:', err)
     } finally {

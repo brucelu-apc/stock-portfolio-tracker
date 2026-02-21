@@ -132,6 +132,15 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
     [holdings]
   )
 
+  // Fallback name lookup from portfolio holdings
+  const holdingsNameMap = useMemo(() => {
+    const map: Record<string, string> = {}
+    holdings.forEach((h: any) => {
+      if (h.name && h.ticker) map[h.ticker] = h.name
+    })
+    return map
+  }, [holdings])
+
   // ── Fetch initial data ──
 
   const fetchData = useCallback(async () => {
@@ -363,9 +372,9 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
                               </Tooltip>
                             )}
                           </HStack>
-                          {target.stock_name && (
+                          {(target.stock_name || holdingsNameMap[target.ticker]) && (
                             <Text fontSize="xs" color="gray.500" noOfLines={1}>
-                              {target.stock_name}
+                              {target.stock_name || holdingsNameMap[target.ticker]}
                             </Text>
                           )}
                         </VStack>
