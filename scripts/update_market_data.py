@@ -103,37 +103,56 @@ def update_market_data():
         print("No tickers to update.")
         return
 
-    # 4. Batch fetch prices using period="5d" for reliability
+    # 4. Fetch prices — separate TW and US to avoid batch NaN issues
     print(f"Updating {len(ticker_map)} tickers (period='5d')...")
 
-    tickers_list = list(ticker_map.keys())
-    tw_variants = [t.replace(".TW", ".TWO") for t in tickers_list if t.endswith(".TW")]
-    all_query_tickers = list(set(tickers_list + tw_variants))
+    # Split into TW and US groups
+    tw_tickers = {k: v for k, v in ticker_map.items() if k.endswith('.TW')}
+    us_tickers = {k: v for k, v in ticker_map.items() if not k.endswith('.TW')}
 
-    try:
-        data = yf.download(
-            all_query_tickers,
-            period="5d",
-            group_by='ticker',
-            progress=False
-        )
-    except Exception as e:
-        print(f"yfinance download failed: {e}")
-        return
+    # Download TW stocks (only .TW, NOT mixed with .TWO)
+    tw_data = None
+    if tw_tickers:
+        tw_list = list(tw_tickers.keys())
+        try:
+            tw_data = yf.download(tw_list, period="5d", group_by='ticker', progress=False)
+        except Exception as e:
+            print(f"TW batch download failed: {e}")
+
+    # Download US stocks separately
+    us_data = None
+    if us_tickers:
+        us_list = list(us_tickers.keys())
+        try:
+            us_data = yf.download(us_list, period="5d", group_by='ticker', progress=False)
+        except Exception as e:
+            print(f"US batch download failed: {e}")
 
     # Get existing sectors from DB
     market_data_res = supabase.table("market_data").select("ticker, sector").execute()
     existing_sectors = {item['ticker']: item.get('sector', 'Unknown') for item in market_data_res.data}
 
-    multi_ticker = len(all_query_tickers) > 1
     updated_count = 0
     failed_count = 0
 
+    def _get_ticker_df(batch_data, query_ticker, batch_size):
+        """Safely extract a single ticker's DataFrame from batch result."""
+        if batch_data is None:
+            return None
+        try:
+            return batch_data[query_ticker] if batch_size > 1 else batch_data
+        except (KeyError, TypeError):
+            return None
+
     for query_ticker, (original_ticker, region) in ticker_map.items():
         try:
-            ticker_data = data[query_ticker] if multi_ticker else data
+            # Pick correct batch result
+            if query_ticker.endswith('.TW'):
+                ticker_data = _get_ticker_df(tw_data, query_ticker, len(tw_tickers))
+            else:
+                ticker_data = _get_ticker_df(us_data, query_ticker, len(us_tickers))
 
-            # .TW → .TWO fallback for Taiwan stocks
+            # .TW → .TWO fallback: individual download (not batch)
             if query_ticker.endswith(".TW"):
                 is_empty = (ticker_data is None or ticker_data.empty)
                 has_nan = False
@@ -145,15 +164,15 @@ def update_market_data():
 
                 if is_empty or has_nan:
                     alt_ticker = query_ticker.replace(".TW", ".TWO")
-                    print(f"Primary {query_ticker} failed, trying {alt_ticker}...")
+                    print(f"Primary {query_ticker} failed, trying {alt_ticker} (individual)...")
                     try:
-                        alt_data = data[alt_ticker] if multi_ticker else data
-                        if alt_data is not None and not alt_data.empty:
-                            test_val = alt_data['Close'].iloc[-1]
+                        alt_df = yf.download(alt_ticker, period="5d", progress=False)
+                        if alt_df is not None and not alt_df.empty:
+                            test_val = alt_df['Close'].iloc[-1]
                             if is_valid_number(test_val):
-                                ticker_data = alt_data
+                                ticker_data = alt_df
                                 query_ticker = alt_ticker
-                    except (KeyError, IndexError):
+                    except Exception:
                         pass
 
             if ticker_data is None or ticker_data.empty:
@@ -241,16 +260,25 @@ def update_market_data():
 def send_alerts_to_line(alerts):
     """
     Send price alerts via LINE Messaging API.
+    Supports both userId (U...) and groupId (C...) targets.
     Falls back to OpenClaw if LINE credentials are not set.
     """
     line_token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
     line_target = os.environ.get("LINE_ALERT_TARGET_ID")
 
     if line_token and line_target:
+        # Validate target format
+        if not (line_target.startswith("U") or line_target.startswith("C") or line_target.startswith("R")):
+            print(f"WARNING: LINE_ALERT_TARGET_ID format may be invalid: '{line_target[:8]}...'")
+            print("  Expected: userId (U...), groupId (C...), or roomId (R...) — 33 characters")
+
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {line_token}",
         }
+
+        # Batch all alerts into a single push (max 5 messages per push)
+        messages = []
         for a in alerts:
             msg = (
                 f"⚠️ 【停損預警】\n"
@@ -259,9 +287,14 @@ def send_alerts_to_line(alerts):
                 f"停損價：${a['sl_price']:.2f}\n"
                 f"狀態：股價已進入停損價 ±2% 警戒區！"
             )
+            messages.append({"type": "text", "text": msg})
+
+        # LINE push API allows max 5 messages per request
+        for i in range(0, len(messages), 5):
+            batch = messages[i:i+5]
             payload = {
                 "to": line_target,
-                "messages": [{"type": "text", "text": msg}],
+                "messages": batch,
             }
             try:
                 resp = requests.post(
@@ -269,9 +302,13 @@ def send_alerts_to_line(alerts):
                     json=payload, headers=headers, timeout=10,
                 )
                 if resp.status_code == 200:
-                    print(f"LINE alert sent for {a['ticker']}")
+                    tickers = [alerts[j]['ticker'] for j in range(i, min(i+5, len(alerts)))]
+                    print(f"LINE alert sent for {', '.join(tickers)}")
                 else:
                     print(f"LINE push failed: {resp.status_code} {resp.text}")
+                    if resp.status_code == 400 and "to" in resp.text:
+                        print("  HINT: Check LINE_ALERT_TARGET_ID — must be a valid LINE userId (U...) or groupId (C...)")
+                        break  # Don't retry same invalid target
             except Exception as e:
                 print(f"LINE push error: {e}")
         return
