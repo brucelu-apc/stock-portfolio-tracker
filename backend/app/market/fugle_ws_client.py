@@ -177,7 +177,9 @@ class FugleWSClient:
         # ── Event handlers (SDK uses .on(event, listener), NOT decorators) ──
         def _on_connect():
             self._connected = True
-            self._reconnect_delay = RECONNECT_BASE_DELAY  # reset backoff
+            # NOTE: Do NOT reset backoff here — only reset after first
+            # successful message, to avoid infinite 1s reconnect loops
+            # when Fugle rejects us for "Maximum connections reached".
             logger.info("Fugle WS connected")
 
             # Re-subscribe tickers that were queued / existed before reconnect
@@ -189,6 +191,10 @@ class FugleWSClient:
         def _on_message(message: dict):
             self._last_message_at = datetime.now(TST)
             self._message_count += 1
+            # Reset backoff only after receiving real data (stable connection)
+            if self._reconnect_delay > RECONNECT_BASE_DELAY:
+                logger.info("Fugle WS connection stable — backoff reset")
+                self._reconnect_delay = RECONNECT_BASE_DELAY
             self._handle_message(message)
 
         def _on_disconnect(code, reason):
@@ -321,6 +327,17 @@ class FugleWSClient:
         if not self._should_run:
             return
         logger.info("Fugle WS attempting reconnect …")
+
+        # Clean up old SDK client to avoid stale connection leaks
+        if self._stock:
+            try:
+                self._stock.disconnect()
+            except Exception:
+                pass
+        self._client = None
+        self._stock = None
+        self._connected = False
+
         self._init_client()
 
     def _cancel_reconnect(self) -> None:
