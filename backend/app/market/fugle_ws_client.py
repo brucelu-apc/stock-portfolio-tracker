@@ -23,6 +23,7 @@ We marshal data back to the main asyncio loop via
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import threading
@@ -37,6 +38,7 @@ TST = ZoneInfo("Asia/Taipei")
 DEFAULT_CHANNEL = "trades"
 RECONNECT_BASE_DELAY = 1.0        # seconds
 RECONNECT_MAX_DELAY = 60.0        # seconds
+MAX_CONN_BACKOFF = 120.0          # longer backoff for "max connections" errors
 
 
 class FugleWSClient:
@@ -62,10 +64,12 @@ class FugleWSClient:
         self._should_run = False     # True between connect() / disconnect()
         self._subscribed: Set[str] = set()
 
-        # Reconnect
+        # Reconnect — use a lock to prevent parallel reconnect storms
         self._reconnect_delay = RECONNECT_BASE_DELAY
         self._reconnect_max = reconnect_max_delay
         self._reconnect_timer: Optional[threading.Timer] = None
+        self._reconnect_lock = threading.Lock()
+        self._reconnecting = False   # True while a reconnect is in progress
 
         # Stats
         self._last_message_at: Optional[datetime] = None
@@ -188,7 +192,18 @@ class FugleWSClient:
             if pending:
                 self.subscribe(pending)
 
-        def _on_message(message: dict):
+        def _on_message(message):
+            # Fugle SDK may deliver raw JSON strings OR parsed dicts
+            if isinstance(message, str):
+                try:
+                    message = json.loads(message)
+                except (json.JSONDecodeError, ValueError):
+                    logger.debug(f"Fugle WS non-JSON message: {message[:120]}")
+                    return
+            if not isinstance(message, dict):
+                logger.debug(f"Fugle WS unexpected message type: {type(message)}")
+                return
+
             self._last_message_at = datetime.now(TST)
             self._message_count += 1
             # Reset backoff only after receiving real data (stable connection)
@@ -200,11 +215,21 @@ class FugleWSClient:
         def _on_disconnect(code, reason):
             self._connected = False
             logger.warning(f"Fugle WS disconnected: code={code} reason={reason}")
-            if self._should_run:
+            if self._should_run and not self._reconnecting:
                 self._schedule_reconnect()
 
         def _on_error(error):
-            logger.error(f"Fugle WS error: {error}")
+            error_str = str(error)
+            logger.error(f"Fugle WS error: {error_str}")
+            # If max connections reached, use much longer backoff
+            if "Maximum number of connections" in error_str:
+                self._reconnect_delay = max(
+                    self._reconnect_delay, MAX_CONN_BACKOFF
+                )
+                logger.warning(
+                    f"Fugle max connections hit — backoff set to "
+                    f"{self._reconnect_delay:.0f}s"
+                )
 
         self._stock.on("connect", _on_connect)
         self._stock.on("message", _on_message)
@@ -216,12 +241,17 @@ class FugleWSClient:
             self._stock.connect()
         except Exception as e:
             logger.error(f"Fugle WS connect failed: {e}")
-            if self._should_run:
+            # Detect max-connections to use longer backoff
+            if "Maximum number of connections" in str(e):
+                self._reconnect_delay = max(
+                    self._reconnect_delay, MAX_CONN_BACKOFF
+                )
+            if self._should_run and not self._reconnecting:
                 self._schedule_reconnect()
 
     # ── Internal: message processing ────────────────────────────
 
-    def _handle_message(self, message: dict) -> None:
+    def _handle_message(self, message) -> None:
         """
         Process a Fugle trades message and write to Supabase.
 
@@ -242,6 +272,15 @@ class FugleWSClient:
         }
         """
         try:
+            # Defensive: parse string messages
+            if isinstance(message, str):
+                try:
+                    message = json.loads(message)
+                except (json.JSONDecodeError, ValueError):
+                    return
+            if not isinstance(message, dict):
+                return
+
             event = message.get("event")
             if event != "data":
                 return  # heartbeat, subscribed confirmation, etc.
@@ -308,37 +347,47 @@ class FugleWSClient:
     # ── Internal: reconnection ──────────────────────────────────
 
     def _schedule_reconnect(self) -> None:
-        """Schedule a reconnect with exponential backoff."""
-        self._cancel_reconnect()
-        delay = self._reconnect_delay
-        logger.info(f"Fugle WS reconnecting in {delay:.1f}s …")
+        """Schedule a reconnect with exponential backoff (thread-safe)."""
+        with self._reconnect_lock:
+            if self._reconnecting:
+                logger.debug("Fugle WS reconnect already scheduled — skipping")
+                return
+            self._reconnecting = True
+            self._cancel_reconnect()
 
-        self._reconnect_timer = threading.Timer(delay, self._do_reconnect)
-        self._reconnect_timer.daemon = True
-        self._reconnect_timer.start()
+            delay = self._reconnect_delay
+            logger.info(f"Fugle WS reconnecting in {delay:.1f}s …")
 
-        # Increase backoff for next attempt
-        self._reconnect_delay = min(
-            self._reconnect_delay * 2, self._reconnect_max
-        )
+            self._reconnect_timer = threading.Timer(delay, self._do_reconnect)
+            self._reconnect_timer.daemon = True
+            self._reconnect_timer.start()
+
+            # Increase backoff for next attempt
+            self._reconnect_delay = min(
+                self._reconnect_delay * 2, self._reconnect_max
+            )
 
     def _do_reconnect(self) -> None:
         """Actual reconnect attempt (runs on Timer thread)."""
-        if not self._should_run:
-            return
-        logger.info("Fugle WS attempting reconnect …")
+        try:
+            if not self._should_run:
+                return
+            logger.info("Fugle WS attempting reconnect …")
 
-        # Clean up old SDK client to avoid stale connection leaks
-        if self._stock:
-            try:
-                self._stock.disconnect()
-            except Exception:
-                pass
-        self._client = None
-        self._stock = None
-        self._connected = False
+            # Clean up old SDK client to avoid stale connection leaks
+            if self._stock:
+                try:
+                    self._stock.disconnect()
+                except Exception:
+                    pass
+            self._client = None
+            self._stock = None
+            self._connected = False
 
-        self._init_client()
+            self._init_client()
+        finally:
+            with self._reconnect_lock:
+                self._reconnecting = False
 
     def _cancel_reconnect(self) -> None:
         """Cancel any pending reconnect timer."""
