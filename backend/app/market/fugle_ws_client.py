@@ -255,21 +255,30 @@ class FugleWSClient:
         """
         Process a Fugle trades message and write to Supabase.
 
-        Message shape (trades channel):
+        Fugle SDK v1.x message shape (trades channel):
         {
             "event": "data",
-            "channel": "trades",
-            "symbol": "2330",
             "data": {
-                "trade": {
-                    "price": 590.0,
-                    "size": 1000,
-                    "time": 1700000000000,
-                    ...
-                },
-                ...
-            }
+                "symbol": "2330",
+                "type": "EQUITY",
+                "exchange": "TWSE",
+                "market": "TSE",
+                "bid": 567,
+                "ask": 568,
+                "price": 568,
+                "size": 4778,
+                "volume": 54538,
+                "isClose": true,
+                "time": 1685338200000000,
+                "serial": 6652422
+            },
+            "id": "<CHANNEL_ID>",
+            "channel": "trades"
         }
+
+        NOTE: In the current SDK, ``symbol`` and ``price`` are inside
+        ``data`` directly — there is no ``trade`` sub-object.
+        For backward compatibility we also check the old location.
         """
         try:
             # Defensive: parse string messages
@@ -285,17 +294,29 @@ class FugleWSClient:
             if event != "data":
                 return  # heartbeat, subscribed confirmation, etc.
 
-            symbol = message.get("symbol", "")
             data = message.get("data", {})
 
-            # Extract price from the trades payload
-            trade = data.get("trade", data)
+            # ── Symbol: current SDK puts it inside ``data``,
+            #    older versions had it at the top level. ──
+            symbol = data.get("symbol") or message.get("symbol", "")
+            if not symbol:
+                logger.debug("Fugle WS: no symbol in message, skipping")
+                return
+
+            # ── Price: current SDK has ``price`` directly in ``data``;
+            #    older versions nested it under ``data.trade.price``. ──
+            trade = data.get("trade", data)  # backward-compat fallback
             price = trade.get("price")
             if price is None or float(price) <= 0:
                 return
 
             price = float(price)
-            volume = trade.get("size") or trade.get("volume")
+            volume = (
+                trade.get("size")
+                or trade.get("volume")
+                or data.get("size")
+                or data.get("volume")
+            )
 
             upsert = {
                 "ticker": symbol,
@@ -308,11 +329,19 @@ class FugleWSClient:
             if volume is not None:
                 upsert["volume"] = int(volume)
 
-            # Additional OHLC fields if present
+            # Additional OHLC fields if present (from candles channel or trade extras)
             for key, col in [("open", "day_open"), ("high", "day_high"), ("low", "day_low")]:
                 val = data.get(key) or trade.get(key)
                 if val is not None:
                     upsert[col] = float(val)
+
+            # Log first message per symbol for debugging
+            if self._message_count <= len(self._subscribed):
+                logger.info(
+                    "Fugle WS price: %s = %.2f (vol=%s, src=%s)",
+                    symbol, price, volume,
+                    "data" if "price" in data else "data.trade",
+                )
 
             # Write to Supabase (from SDK thread → asyncio loop)
             asyncio.run_coroutine_threadsafe(

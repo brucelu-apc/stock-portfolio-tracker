@@ -221,7 +221,15 @@ class FinnhubWSClient:
             logger.error(f"Finnhub message error: {e}", exc_info=True)
 
     def _on_error(self, ws, error) -> None:
-        logger.error(f"Finnhub WS error: {error}")
+        error_str = str(error)
+        logger.error(f"Finnhub WS error: {error_str}")
+        # 429 Too Many Requests — back off much longer to avoid rate-limit storm
+        if "429" in error_str or "API limit reached" in error_str:
+            self._reconnect_delay = max(self._reconnect_delay, 120.0)
+            logger.warning(
+                "Finnhub rate limited (429) — backoff set to %.0fs",
+                self._reconnect_delay,
+            )
 
     def _on_close(self, ws, close_status_code, close_msg) -> None:
         self._connected = False
