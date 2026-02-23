@@ -66,6 +66,15 @@ async def init_monitor(supabase_client):
     shioaji_enabled = getattr(settings, "SHIOAJI_ENABLED", False)
     any_ws_enabled = fugle_enabled or finnhub_enabled or shioaji_enabled
 
+    fugle_key_set = bool(getattr(settings, "FUGLE_API_KEY", ""))
+    logger.info(
+        "Monitor config: fugle=%s (key=%s), shioaji=%s, finnhub=%s",
+        fugle_enabled,
+        "set" if fugle_key_set else "EMPTY",
+        shioaji_enabled,
+        finnhub_enabled,
+    )
+
     if any_ws_enabled:
         from app.market.quote_manager import QuoteManager
 
@@ -89,19 +98,26 @@ async def init_monitor(supabase_client):
         max_instances=1,
     )
 
-    # Job 2: twstock polling fallback — only when Fugle/Shioaji are DISABLED
-    if not fugle_enabled and not shioaji_enabled:
-        scheduler.add_job(
-            realtime_tw_monitor,
-            IntervalTrigger(seconds=interval_seconds, timezone=TST),
-            id='realtime_tw_fallback',
-            name='Taiwan Real-time Fallback (twstock)',
-            replace_existing=True,
-            max_instances=1,
+    # Job 2: twstock polling fallback — ALWAYS registered.
+    # When WS feeds (Fugle/Shioaji) are active AND healthy, this job
+    # short-circuits.  When they are down or disabled, twstock kicks in
+    # automatically so the dashboard never shows "休市" during market hours.
+    scheduler.add_job(
+        realtime_tw_monitor,
+        IntervalTrigger(seconds=interval_seconds, timezone=TST),
+        id='realtime_tw_fallback',
+        name='Taiwan Real-time Fallback (twstock)',
+        replace_existing=True,
+        max_instances=1,
+    )
+    if fugle_enabled or shioaji_enabled:
+        logger.info(
+            "twstock polling registered as FALLBACK "
+            "(primary: Fugle=%s Shioaji=%s)",
+            fugle_enabled, shioaji_enabled,
         )
-        logger.info("twstock polling active (Fugle/Shioaji disabled)")
     else:
-        logger.info("twstock polling skipped (WS feed handles real-time)")
+        logger.info("twstock polling active (no WS feed enabled)")
 
     # Job 3: Taiwan market close update
     scheduler.add_job(
@@ -181,13 +197,67 @@ async def alert_check():
         logger.error(f"Alert check error: {e}", exc_info=True)
 
 
+def _is_tw_ws_healthy(max_stale_seconds: float = 90.0) -> bool:
+    """
+    Check whether a WebSocket feed (Fugle or Shioaji) is actively
+    delivering Taiwan stock prices.
+
+    Returns True ONLY when **all** of the following hold:
+      1. QuoteManager is running
+      2. At least one TW-capable source reports ``connected = True``
+      3. That source received a message within *max_stale_seconds*
+
+    If any condition fails, the twstock fallback should run.
+    """
+    if not _quote_manager:
+        return False
+
+    try:
+        health = _quote_manager.health()
+        if not health.get("running"):
+            return False
+
+        now = datetime.now(TST)
+        for src in health.get("sources", []):
+            if src.get("source") not in ("fugle_ws", "shioaji"):
+                continue
+            if not src.get("connected"):
+                continue
+            # Check freshness — a connected but stale feed is NOT healthy
+            last_msg = src.get("last_message_at")
+            if last_msg:
+                if isinstance(last_msg, str):
+                    last_msg = datetime.fromisoformat(last_msg)
+                if last_msg.tzinfo is None:
+                    last_msg = last_msg.replace(tzinfo=TST)
+                age = (now - last_msg).total_seconds()
+                if age <= max_stale_seconds:
+                    return True  # Fresh data — WS is healthy
+            # connected but no messages yet → not healthy
+        return False
+    except Exception as e:
+        logger.warning(f"WS health check error: {e}")
+        return False
+
+
 async def realtime_tw_monitor():
     """
     Every 30 seconds during market hours:
-    Fetch Taiwan stock real-time prices, update DB, check alerts.
+    Fetch Taiwan stock real-time prices via twstock, update DB, check alerts.
+
+    This job is ALWAYS scheduled.  When a WebSocket feed (Fugle / Shioaji)
+    is connected AND actively delivering prices, this job short-circuits
+    to avoid duplicate writes.  When the WS feed is down, it seamlessly
+    takes over so the dashboard never shows "休市" during market hours.
     """
     if not is_market_open():
         return  # Skip outside market hours
+
+    # ── Fallback gate: skip if WS feed is healthy ──
+    if _is_tw_ws_healthy():
+        return  # WS is delivering prices — no need for twstock
+
+    logger.info("twstock fallback activated (WS feed not healthy)")
 
     try:
         # 1. Get all tracked Taiwan tickers
