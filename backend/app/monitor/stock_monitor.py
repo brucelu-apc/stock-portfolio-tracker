@@ -248,22 +248,21 @@ def _is_tw_ws_healthy(max_stale_seconds: float = 90.0) -> bool:
 
 async def realtime_tw_monitor():
     """
-    Every 30 seconds during market hours:
+    Every 90 seconds during market hours:
     Fetch Taiwan stock real-time prices via twstock, update DB, check alerts.
 
-    This job is ALWAYS scheduled.  When a WebSocket feed (Fugle / Shioaji)
-    is connected AND actively delivering prices, this job short-circuits
-    to avoid duplicate writes.  When the WS feed is down, it seamlessly
-    takes over so the dashboard never shows "休市" during market hours.
+    This job is ALWAYS scheduled.  Behaviour depends on WS feed health:
+
+      - **WS healthy**: Only fetch tickers whose ``updated_at`` in
+        ``market_data`` is older than ``STALE_THRESHOLD`` seconds.
+        This covers ETFs or small-caps that Fugle's free tier may not
+        deliver data for, without duplicating work for tickers Fugle
+        already covers.
+
+      - **WS unhealthy / down**: Fetch ALL tracked tickers (full fallback).
     """
     if not is_market_open():
         return  # Skip outside market hours
-
-    # ── Fallback gate: skip if WS feed is healthy ──
-    if _is_tw_ws_healthy():
-        return  # WS is delivering prices — no need for twstock
-
-    logger.info("twstock fallback activated (WS feed not healthy)")
 
     try:
         # 1. Get all tracked Taiwan tickers
@@ -271,8 +270,25 @@ async def realtime_tw_monitor():
         if not tracked_tickers:
             return
 
+        ws_healthy = _is_tw_ws_healthy()
+
+        if ws_healthy:
+            # ── Supplement mode: only fetch tickers Fugle missed ──
+            stale = await _get_stale_tickers(tracked_tickers, max_age_seconds=180)
+            if not stale:
+                return  # All tickers are fresh — nothing to do
+            logger.info(
+                "twstock supplement: %d/%d tickers stale (WS healthy but incomplete): %s",
+                len(stale), len(tracked_tickers), stale,
+            )
+            tickers_to_fetch = stale
+        else:
+            # ── Full fallback mode ──
+            logger.info("twstock fallback activated (WS feed not healthy)")
+            tickers_to_fetch = tracked_tickers
+
         # 2. Fetch real-time prices
-        prices = await fetch_realtime_prices(tracked_tickers)
+        prices = await fetch_realtime_prices(tickers_to_fetch)
         if not prices:
             return
 
@@ -285,7 +301,7 @@ async def realtime_tw_monitor():
         # 5. Check and process alerts
         await _process_alerts(current_prices)
 
-        logger.info(f"TW realtime: {len(prices)} tickers updated")
+        logger.info(f"TW realtime: {len(prices)} tickers updated via twstock")
 
     except Exception as e:
         logger.error(f"Realtime monitor error: {e}", exc_info=True)
@@ -357,6 +373,49 @@ async def monthly_report_job():
 
 
 # ─── Helper Functions ─────────────────────────────────────────
+
+async def _get_stale_tickers(
+    tickers: list[str],
+    max_age_seconds: float = 180,
+) -> list[str]:
+    """
+    Return the subset of *tickers* whose ``updated_at`` in ``market_data``
+    is older than *max_age_seconds*, or that have no row at all.
+
+    Used to detect tickers that Fugle WS is NOT delivering data for,
+    so twstock can fill the gap.
+    """
+    try:
+        res = (
+            _supabase.table("market_data")
+            .select("ticker, updated_at")
+            .eq("region", "TPE")
+            .execute()
+        )
+        now = datetime.now(TST)
+        fresh: set[str] = set()
+        for row in res.data:
+            t = row.get("ticker", "")
+            ua = row.get("updated_at")
+            if not t or not ua:
+                continue
+            try:
+                updated = datetime.fromisoformat(ua)
+                if updated.tzinfo is None:
+                    updated = updated.replace(tzinfo=TST)
+                age = (now - updated).total_seconds()
+                if age <= max_age_seconds:
+                    fresh.add(t)
+            except (ValueError, TypeError):
+                pass  # treat parse failures as stale
+
+        stale = [t for t in tickers if t not in fresh]
+        return stale
+    except Exception as e:
+        logger.warning(f"Stale ticker check failed: {e}")
+        # On error, return all tickers so twstock can cover everything
+        return tickers
+
 
 async def _get_tracked_tickers(region: Optional[str] = None) -> list[str]:
     """Get all tickers that need monitoring (from holdings + advisory targets)."""

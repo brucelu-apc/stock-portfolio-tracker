@@ -76,6 +76,7 @@ class FugleWSClient:
         # Stats
         self._last_message_at: Optional[datetime] = None
         self._message_count = 0
+        self._seen_symbols: set[str] = set()  # Track which symbols actually receive data
 
     # ── Public API ──────────────────────────────────────────────
 
@@ -162,6 +163,8 @@ class FugleWSClient:
                 self._last_message_at.isoformat() if self._last_message_at else None
             ),
             "total_messages": self._message_count,
+            "symbols_covered": len(self._seen_symbols),
+            "symbols_subscribed": len(self._subscribed),
         }
 
     # ── Internal: SDK initialisation ────────────────────────────
@@ -339,12 +342,15 @@ class FugleWSClient:
                 if val is not None:
                     upsert[col] = float(val)
 
-            # Log first message per symbol for debugging
-            if self._message_count <= len(self._subscribed):
+            # Log first message per symbol for debugging (track coverage)
+            if symbol not in self._seen_symbols:
+                self._seen_symbols.add(symbol)
                 logger.info(
-                    "Fugle WS price: %s = %.2f (vol=%s, src=%s)",
+                    "Fugle WS first price: %s = %.2f (vol=%s, src=%s) "
+                    "[%d/%d symbols covered]",
                     symbol, price, volume,
                     "data" if "price" in data else "data.trade",
+                    len(self._seen_symbols), len(self._subscribed),
                 )
 
             # Write to Supabase (from SDK thread → asyncio loop)
