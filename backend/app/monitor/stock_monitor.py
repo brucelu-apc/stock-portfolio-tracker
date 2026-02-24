@@ -326,7 +326,14 @@ async def daily_tw_close():
 
 
 async def daily_us_close():
-    """After US market close: fetch US prices + USDTWD exchange rate."""
+    """
+    After US market close: fetch US prices + USDTWD exchange rate.
+
+    Runs at 06:30 TST (≈ 17:30 / 18:30 ET depending on DST).
+    Also clears ``realtime_price`` for all US tickers so the dashboard
+    shows "休市" until the next trading session.
+    """
+    logger.info("=== daily_us_close job started ===")
     try:
         # Update exchange rate
         fx = await fetch_exchange_rate()
@@ -343,21 +350,56 @@ async def daily_us_close():
                 "updated_at": datetime.now(TST).isoformat(),
             }, on_conflict='ticker').execute()
             logger.info(f"USDTWD updated: {fx['current_price']}")
+        else:
+            logger.warning("daily_us_close: fetch_exchange_rate returned None")
 
         # Update US stock prices
         us_tickers = await _get_tracked_tickers(region='US')
+        logger.info(f"daily_us_close: tracked US tickers = {us_tickers}")
+
         if us_tickers:
             ticker_dicts = [{'ticker': t, 'region': 'US'} for t in us_tickers]
             prices = await fetch_close_prices(ticker_dicts, _supabase)
+            logger.info(
+                "daily_us_close: yfinance returned %d/%d tickers: %s",
+                len(prices), len(us_tickers),
+                list(prices.keys()),
+            )
+
+            succeeded = 0
             for ticker, data in prices.items():
-                await _update_single_market_data(ticker, data, source='yfinance')
+                try:
+                    await _update_single_market_data(ticker, data, source='yfinance')
+                    succeeded += 1
+                    logger.info(
+                        "  US close: %s → close=%.2f, prev_close=%.2f",
+                        ticker, data['current_price'],
+                        data.get('prev_close', 0),
+                    )
+                except Exception as e:
+                    logger.error(f"  US close: {ticker} upsert failed: {e}")
+
+            # Report tickers yfinance didn't return
+            missing = set(us_tickers) - set(prices.keys())
+            if missing:
+                logger.warning(
+                    "daily_us_close: yfinance MISSED %d tickers: %s",
+                    len(missing), missing,
+                )
 
             # Update high watermarks
             await _update_high_watermarks(prices)
-            logger.info(f"US close update: {len(prices)} tickers")
+            logger.info(
+                "daily_us_close: %d/%d tickers updated successfully",
+                succeeded, len(us_tickers),
+            )
+        else:
+            logger.info("daily_us_close: no US tickers to update")
 
     except Exception as e:
         logger.error(f"US close update error: {e}", exc_info=True)
+
+    logger.info("=== daily_us_close job finished ===")
 
 
 async def monthly_report_job():

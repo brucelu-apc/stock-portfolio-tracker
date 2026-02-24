@@ -11,6 +11,10 @@ Features
 * Auto-reconnect with exponential backoff
 * Writes price updates to Supabase ``market_data`` (region='US')
 * Thread-safe bridge to asyncio for DB writes
+* **Market-hours aware**: only writes ``realtime_price`` during regular
+  US trading hours (09:30–16:00 ET, weekdays).  Outside those hours
+  trade messages are silently ignored so the dashboard correctly shows
+  "休市" (market closed).
 
 Message format from Finnhub
 ---------------------------
@@ -35,6 +39,24 @@ from zoneinfo import ZoneInfo
 logger = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
 TST = ZoneInfo("Asia/Taipei")
+
+
+def _is_us_market_open() -> bool:
+    """
+    Return True if US regular trading session is active.
+
+    Regular hours: Mon–Fri 09:30–16:00 Eastern Time.
+    Does NOT account for US holidays — for a hobby project this is fine;
+    the worst case is writing ``realtime_price`` on a holiday which the
+    ``daily_us_close`` job will overwrite anyway.
+    """
+    now_et = datetime.now(ET)
+    if now_et.weekday() >= 5:          # Saturday=5, Sunday=6
+        return False
+    t = now_et.time()
+    # 09:30 <= now < 16:00
+    from datetime import time as dt_time
+    return dt_time(9, 30) <= t < dt_time(16, 0)
 
 WS_URL = "wss://ws.finnhub.io"
 RECONNECT_BASE_DELAY = 1.0
@@ -166,7 +188,14 @@ class FinnhubWSClient:
             self._send_subscribe(ticker)
 
     def _on_message(self, ws, raw_message: str) -> None:
-        """Handle incoming trade messages."""
+        """Handle incoming trade messages.
+
+        IMPORTANT: Only writes ``realtime_price`` during US regular
+        trading hours (09:30–16:00 ET, weekdays).  Outside those hours
+        the message is silently dropped so ``realtime_price`` stays
+        ``None`` (set by ``daily_us_close``) and the frontend correctly
+        shows "休市".
+        """
         self._last_message_at = datetime.now(TST)
         self._message_count += 1
 
@@ -178,6 +207,17 @@ class FinnhubWSClient:
                 return
 
             if msg_type != "trade":
+                return
+
+            # ── Market hours gate ──
+            if not _is_us_market_open():
+                # Log once every 500 messages to avoid spam
+                if self._message_count % 500 == 1:
+                    logger.debug(
+                        "Finnhub WS: ignoring trade (US market closed), "
+                        "total ignored msgs since connect: %d",
+                        self._message_count,
+                    )
                 return
 
             trades = msg.get("data", [])
@@ -263,7 +303,9 @@ class FinnhubWSClient:
 
     async def _upsert(self, data: dict) -> None:
         try:
-            self._supabase.table("market_data").upsert(data).execute()
+            self._supabase.table("market_data").upsert(
+                data, on_conflict='ticker'
+            ).execute()
         except Exception as e:
             logger.error(f"Finnhub→Supabase upsert error [{data.get('ticker')}]: {e}")
 
