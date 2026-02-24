@@ -3,13 +3,23 @@ Notification Parser — Regex-based engine for 楊少凱贏家 advisory messages
 ==========================================================================
 
 Parses 7 message types:
-  1. greeting      — 問候語 (ignore)
+  1. greeting       — 問候語 (ignore)
   2. market_analysis — 大盤解析 + 法人鎖碼股
   3. recommendation — 個股推薦 with target prices
   4. institutional  — 法人鎖碼股 (only defense prices)
-  5. buy_signal    — 買進建立
-  6. hold          — 續抱 / 防守價不跌破
-  7. sell_signal   — 賣出 / 離場
+  5. buy_signal     — 買進建立
+  6. hold           — 續抱 / 防守價不跌破
+  7. sell_signal    — 賣出 / 離場
+
+Output format (fixed for every stock):
+  * 股票名稱(股票代號)
+  * 操作訊號
+  * 防守價
+  * 最小漲幅
+  * 合理漲幅
+  * 操作策略
+
+Fields that can't be parsed default to "待定" and are editable before import.
 
 Usage:
     from app.parser.notification_parser import parse_notification
@@ -23,11 +33,13 @@ from typing import Optional
 from fastapi import APIRouter
 
 from app.models.schemas import (
+    PENDING,
     MessageType,
     ParsedStock,
     ParsedMessage,
     ParseRequest,
     ParseResponse,
+    EditedStock,
     ImportRequest,
     ImportResponse,
 )
@@ -112,8 +124,13 @@ def classify_message(text: str) -> MessageType:
         if any(kw in text for kw in ["早安", "快樂", "美好", "希望", "太陽", "大門"]):
             return MessageType.GREETING
 
-    # Check for sell signal (note: "資金轉買" is a buy indicator, not sell)
-    if RE_SELL_SIGNAL.search(text) and ("走勢不如預期" in text or "資金轉買" in text):
+    # Check for sell signal — multiple indicators:
+    #   1. Explicit "賣出/離場" + context keywords
+    #   2. "走勢不如預期" alone (implies sell even without explicit 賣出)
+    #   3. "資金轉買" (compound sell→buy message)
+    if "走勢不如預期" in text or "資金轉買" in text:
+        return MessageType.SELL_SIGNAL
+    if RE_SELL_SIGNAL.search(text) and ("獲利了結" in text or "目標價到" in text):
         return MessageType.SELL_SIGNAL
 
     # Check for market analysis (大盤解析)
@@ -133,7 +150,7 @@ def classify_message(text: str) -> MessageType:
         return MessageType.HOLD
 
     # Check for institutional stocks only
-    if RE_INSTITUTIONAL_HEADER.search(text) and not "大盤解析" in text:
+    if RE_INSTITUTIONAL_HEADER.search(text) and "大盤解析" not in text:
         return MessageType.INSTITUTIONAL
 
     # Supplementary analysis or commentary
@@ -144,70 +161,98 @@ def classify_message(text: str) -> MessageType:
     return MessageType.GREETING
 
 
+# ─── Action signal inference ─────────────────────────────────
+
+def _infer_action_type(msg_type: MessageType, text: str) -> str:
+    """
+    Infer the action_type for a stock based on message type and context.
+
+    Returns: 'buy', 'sell', 'hold', 'institutional', or ''
+    """
+    if msg_type == MessageType.BUY_SIGNAL:
+        return "buy"
+    if msg_type == MessageType.SELL_SIGNAL:
+        return "sell"
+    if msg_type == MessageType.HOLD:
+        return "hold"
+    if msg_type == MessageType.INSTITUTIONAL:
+        return "institutional"
+    if msg_type == MessageType.RECOMMENDATION:
+        # Recommendations are implicitly buy-oriented
+        if RE_BUY_SIGNAL.search(text) or RE_ENTRY_PRICE.search(text):
+            return "buy"
+        return "buy"  # default for recommendations
+    if msg_type == MessageType.MARKET_ANALYSIS:
+        return "institutional"  # stocks in 大盤解析 are 法人鎖碼股
+    return ""
+
+
 # ─── Helper functions ─────────────────────────────────────────
 
 def _extract_defense_price(text: str) -> Optional[float]:
     """Extract defense price from text, handling multiple regex patterns."""
     match = RE_DEFENSE_PRICE.search(text)
     if match:
-        # Group 1: standard "防守價53元" format
-        # Group 2: reverse "可以53元為防守價" format
         val = match.group(1) or match.group(2)
         if val:
             return float(val)
     return None
 
 
-# ─── Stock extraction ─────────────────────────────────────────
+def _extract_strategy(text: str, fallback: str = "") -> str:
+    """
+    Extract strategy notes from text.
 
-def extract_institutional_stocks(text: str) -> list[ParsedStock]:
-    """Extract stocks from 法人鎖碼股 section."""
-    stocks: list[ParsedStock] = []
-    seen_tickers: set[str] = set()
+    Looks for explicit "操作策略：" section first,
+    then falls back to contextual extraction.
+    """
+    # Explicit 操作策略 section
+    strategy_match = re.search(
+        r"操作策略[：:]\s*(.+?)(?:\n\n|\Z)", text, re.DOTALL
+    )
+    if strategy_match:
+        return strategy_match.group(1).strip()[:500]
 
-    for match in RE_INSTITUTIONAL_STOCK.finditer(text):
-        ticker = match.group(1)
-        name = match.group(2).strip()
-        defense = float(match.group(3))
+    # Try to find parenthetical reasoning with CJK chars
+    reason_match = re.search(r"[（(]([^）)\d]{2}[^）)]{2,48})[）)]", text)
+    if reason_match:
+        reason = reason_match.group(1)
+        if "防守" not in reason:  # Don't use "防守價150元" as strategy
+            return reason
 
-        if ticker not in seen_tickers:
-            seen_tickers.add(ticker)
-            stocks.append(ParsedStock(
-                ticker=ticker,
-                name=name,
-                defense_price=defense,
-                strategy_notes="法人鎖碼股",
-            ))
-
-    return stocks
+    return fallback
 
 
-def extract_recommendation_stocks(text: str) -> list[ParsedStock]:
-    """Extract stocks from recommendation messages with target prices."""
-    stocks: list[ParsedStock] = []
+def _build_stock(
+    ticker: str,
+    name: str,
+    text: str,
+    action_type: str,
+    *,
+    defense_price: Optional[float] = None,
+    skip_target_extraction: bool = False,
+) -> ParsedStock:
+    """
+    Build a ParsedStock with all extractable fields, then fill display fields.
 
-    # Find stock references
-    stock_refs: list[tuple[str, str]] = []
+    This is the single factory function for creating stocks — ensures every
+    stock goes through fill_display_fields() for consistent output.
+    """
+    # Clean common prefixes from stock names
+    clean_name = re.sub(r"^(?:資金轉買|轉買|新增)", "", name).strip()
+    if not clean_name:
+        clean_name = name
 
-    # Pattern: 名稱（代號）
-    for m in re.finditer(r"([^\d\s,，。（(）)\n]{1,6})[（(](\d{4,6})[）)]", text):
-        name = m.group(1).strip()
-        ticker = m.group(2)
-        # Filter out "防守價" pattern
-        if "防守" not in name:
-            stock_refs.append((ticker, name))
+    stock = ParsedStock(ticker=ticker, name=clean_name)
+    stock.action_type = action_type
 
-    if not stock_refs:
-        return stocks
-
-    # For each found stock, extract associated prices from the full text
-    # (for single-stock messages, prices apply to that stock)
-    for ticker, name in stock_refs:
-        stock = ParsedStock(ticker=ticker, name=name)
-
-        # Defense price
+    # Defense price: explicit param overrides extraction
+    if defense_price is not None:
+        stock.defense_price = defense_price
+    else:
         stock.defense_price = _extract_defense_price(text)
 
+    if not skip_target_extraction:
         # Min target
         min_match = RE_MIN_TARGET.search(text)
         if min_match:
@@ -225,11 +270,67 @@ def extract_recommendation_stocks(text: str) -> list[ParsedStock]:
         if entry_match:
             stock.entry_price = float(entry_match.group(1))
 
-        # Strategy notes — extract the "操作策略：" section
-        strategy_match = re.search(r"操作策略[：:]\s*(.+?)(?:\n\n|\Z)", text, re.DOTALL)
-        if strategy_match:
-            stock.strategy_notes = strategy_match.group(1).strip()[:500]
+    # Strategy notes
+    stock.strategy_notes = _extract_strategy(text, fallback="")
 
+    # ★ Fill fixed-format display fields (待定 for missing)
+    stock.fill_display_fields()
+
+    return stock
+
+
+# ─── Stock extraction ─────────────────────────────────────────
+
+def extract_institutional_stocks(
+    text: str, action_type: str = "institutional"
+) -> list[ParsedStock]:
+    """Extract stocks from 法人鎖碼股 section."""
+    stocks: list[ParsedStock] = []
+    seen_tickers: set[str] = set()
+
+    for match in RE_INSTITUTIONAL_STOCK.finditer(text):
+        ticker = match.group(1)
+        name = match.group(2).strip()
+        defense = float(match.group(3))
+
+        if ticker not in seen_tickers:
+            seen_tickers.add(ticker)
+            stock = _build_stock(
+                ticker, name, text,
+                action_type=action_type,
+                defense_price=defense,
+                skip_target_extraction=True,
+            )
+            # Override strategy for institutional stocks
+            if not stock.strategy_notes:
+                stock.strategy_notes = "法人鎖碼股"
+                stock.strategy_display = "法人鎖碼股"
+            stocks.append(stock)
+
+    return stocks
+
+
+def extract_recommendation_stocks(
+    text: str, action_type: str = "buy"
+) -> list[ParsedStock]:
+    """Extract stocks from recommendation messages with target prices."""
+    stocks: list[ParsedStock] = []
+
+    # Find stock references: 名稱（代號）
+    stock_refs: list[tuple[str, str]] = []
+    for m in re.finditer(
+        r"([^\d\s,，。（(）)\n]{1,6})[（(](\d{4,6})[）)]", text
+    ):
+        name = m.group(1).strip()
+        ticker = m.group(2)
+        if "防守" not in name:
+            stock_refs.append((ticker, name))
+
+    if not stock_refs:
+        return stocks
+
+    for ticker, name in stock_refs:
+        stock = _build_stock(ticker, name, text, action_type=action_type)
         stocks.append(stock)
 
     return stocks
@@ -239,40 +340,16 @@ def extract_buy_signal_stocks(text: str) -> list[ParsedStock]:
     """Extract stocks from buy signal messages."""
     stocks: list[ParsedStock] = []
 
-    # Find stock references
-    for m in re.finditer(r"([^\d\s,，。（(）)\n]{1,6})[（(](\d{4,6})[）)]", text):
+    for m in re.finditer(
+        r"([^\d\s,，。（(）)\n]{1,6})[（(](\d{4,6})[）)]", text
+    ):
         name = m.group(1).strip()
         ticker = m.group(2)
         if "防守" not in name:
-            stock = ParsedStock(ticker=ticker, name=name)
-            stock.action_type = "buy"
-
-            # Defense price
-            defense_match = RE_DEFENSE_PRICE.search(text)
-            if defense_match:
-                stock.defense_price = float(defense_match.group(1))
-
-            # Entry price
-            entry_match = RE_ENTRY_PRICE.search(text)
-            if entry_match:
-                stock.entry_price = float(entry_match.group(1))
-
-            # Min / reasonable targets
-            min_m = RE_MIN_TARGET.search(text)
-            if min_m:
-                stock.min_target_low = float(min_m.group(1))
-                stock.min_target_high = float(min_m.group(2))
-            reas_m = RE_REASONABLE_TARGET.search(text)
-            if reas_m:
-                stock.reasonable_target_low = float(reas_m.group(1))
-                stock.reasonable_target_high = float(reas_m.group(2))
-
-            # Try to extract actual 操作策略 content; fallback to "買進建立"
-            strategy_match = re.search(r"操作策略[：:]\s*(.+?)(?:\n\n|\Z)", text, re.DOTALL)
-            if strategy_match:
-                stock.strategy_notes = strategy_match.group(1).strip()[:500]
-            else:
+            stock = _build_stock(ticker, name, text, action_type="buy")
+            if not stock.strategy_notes:
                 stock.strategy_notes = "買進建立"
+                stock.strategy_display = "買進建立"
             stocks.append(stock)
 
     return stocks
@@ -288,7 +365,7 @@ def extract_sell_signal_stocks(text: str) -> list[ParsedStock]:
     """
     stocks: list[ParsedStock] = []
 
-    # Detect compound sell + buy message: "資金轉買" splits the message
+    # Detect compound sell + buy message
     buy_split_pos = text.find("資金轉買")
     if buy_split_pos >= 0:
         sell_part = text[:buy_split_pos]
@@ -297,62 +374,47 @@ def extract_sell_signal_stocks(text: str) -> list[ParsedStock]:
         sell_part = text
         buy_part = ""
 
-    # --- Extract SELL stocks (from text before 資金轉買, or entire text) ---
-    for m in re.finditer(r"([^\d\s,，。（(）)\n]{1,6})[（(](\d{4,6})[）)]", sell_part):
+    # --- SELL stocks ---
+    for m in re.finditer(
+        r"([^\d\s,，。（(）)\n]{1,6})[（(](\d{4,6})[）)]", sell_part
+    ):
         name = m.group(1).strip()
         ticker = m.group(2)
         if "防守" not in name:
-            stock = ParsedStock(ticker=ticker, name=name)
-            stock.action_type = "sell"
-            sell_reason = re.search(r"(走勢不如預期|獲利了結|目標價到|離場)", sell_part)
-            stock.strategy_notes = f"賣出 — {sell_reason.group(1)}" if sell_reason else "賣出"
+            stock = _build_stock(
+                ticker, name, sell_part,
+                action_type="sell",
+                skip_target_extraction=True,
+            )
+            # Extract sell reason
+            sell_reason = re.search(
+                r"(走勢不如預期|獲利了結|目標價到|離場)", sell_part
+            )
+            reason_text = (
+                f"賣出 — {sell_reason.group(1)}" if sell_reason else "賣出"
+            )
+            stock.strategy_notes = reason_text
+            stock.strategy_display = reason_text
             stocks.append(stock)
 
-    # --- Extract BUY stocks (from text after 資金轉買) ---
+    # --- BUY stocks (after 資金轉買) ---
     if buy_part:
-        for m in re.finditer(r"([^\d\s,，。（(）)\n]{1,6})[（(](\d{4,6})[）)]", buy_part):
+        for m in re.finditer(
+            r"([^\d\s,，。（(）)\n]{1,6})[（(](\d{4,6})[）)]", buy_part
+        ):
             raw_name = m.group(1).strip()
             ticker = m.group(2)
-
-            # Clean name: strip "資金轉買" prefix
             name = re.sub(r"^(?:資金轉買|轉買)", "", raw_name).strip()
             if not name:
                 name = raw_name
 
             if "防守" not in name:
-                stock = ParsedStock(ticker=ticker, name=name)
-                stock.action_type = "buy"
-
-                # Extract defense price from buy_part
-                stock.defense_price = _extract_defense_price(buy_part)
-
-                # Extract entry price
-                entry_match = RE_ENTRY_PRICE.search(buy_part)
-                if entry_match:
-                    stock.entry_price = float(entry_match.group(1))
-
-                # Extract targets if present
-                min_match = RE_MIN_TARGET.search(buy_part)
-                if min_match:
-                    stock.min_target_low = float(min_match.group(1))
-                    stock.min_target_high = float(min_match.group(2))
-                reas_match = RE_REASONABLE_TARGET.search(buy_part)
-                if reas_match:
-                    stock.reasonable_target_low = float(reas_match.group(1))
-                    stock.reasonable_target_high = float(reas_match.group(2))
-
-                # Strategy notes from buy context
-                strategy_match = re.search(r"操作策略[：:]\s*(.+?)(?:\n\n|\Z)", buy_part, re.DOTALL)
-                if strategy_match:
-                    stock.strategy_notes = strategy_match.group(1).strip()[:500]
-                else:
-                    # Try to capture parenthetical reason: （低檔有主力進場的跡象）
-                    # Skip pure numbers like （2393） by requiring at least one CJK char
-                    reason_match = re.search(r"[（(]([^）)\d]{2}[^）)]{2,48})[）)]", buy_part)
-                    if reason_match:
-                        stock.strategy_notes = f"資金轉買 — {reason_match.group(1)}"
-                    else:
-                        stock.strategy_notes = "資金轉買"
+                stock = _build_stock(
+                    ticker, name, buy_part, action_type="buy"
+                )
+                if not stock.strategy_notes:
+                    stock.strategy_notes = "資金轉買"
+                    stock.strategy_display = "資金轉買"
                 stocks.append(stock)
 
     return stocks
@@ -376,12 +438,48 @@ def extract_market_data(text: str) -> tuple[Optional[float], Optional[float]]:
     return support, resistance
 
 
+# ─── Formatted output builder ─────────────────────────────────
+
+def _build_formatted_output(stocks: list[ParsedStock]) -> list[dict]:
+    """
+    Build the fixed-format output list for the API response.
+
+    Each item is a dict with the 6 editable fields + ticker for identification.
+    This is what the frontend renders as editable cards/rows.
+    """
+    output: list[dict] = []
+    for stock in stocks:
+        output.append({
+            "ticker": stock.ticker,
+            "name": stock.name,
+            "display_name": stock.display_name,
+            "action_signal": stock.action_signal,
+            "defense_price_display": stock.defense_price_display,
+            "min_target_display": stock.min_target_display,
+            "reasonable_target_display": stock.reasonable_target_display,
+            "strategy_display": stock.strategy_display,
+            # Raw values for backend use
+            "defense_price": stock.defense_price,
+            "min_target_low": stock.min_target_low,
+            "min_target_high": stock.min_target_high,
+            "reasonable_target_low": stock.reasonable_target_low,
+            "reasonable_target_high": stock.reasonable_target_high,
+            "entry_price": stock.entry_price,
+            "action_type": stock.action_type,
+        })
+    return output
+
+
 # ─── Main parse function ─────────────────────────────────────
 
 def parse_notification(text: str) -> ParseResponse:
     """
     Parse a full notification text (potentially multi-day) into
     structured messages and stock data.
+
+    Returns a ParseResponse with:
+      - messages: detailed per-block breakdown
+      - formatted_output: fixed-format list of all unique stocks (editable)
     """
     messages: list[ParsedMessage] = []
     dates_found: list[str] = []
@@ -421,10 +519,11 @@ def parse_notification(text: str) -> ParseResponse:
 
             # This is a message body
             msg_type = classify_message(part)
+            action_type = _infer_action_type(msg_type, part)
 
             parsed_msg = ParsedMessage(
                 message_type=msg_type,
-                raw_text=part[:2000],  # limit stored text
+                raw_text=part[:2000],
             )
 
             # Extract data based on type
@@ -432,8 +531,6 @@ def parse_notification(text: str) -> ParseResponse:
                 support, resistance = extract_market_data(part)
                 parsed_msg.market_support = support
                 parsed_msg.market_resistance = resistance
-
-                # Also extract institutional stocks from 大盤解析 section
                 inst_stocks = extract_institutional_stocks(part)
                 if inst_stocks:
                     parsed_msg.stocks = inst_stocks
@@ -441,7 +538,7 @@ def parse_notification(text: str) -> ParseResponse:
                         all_tickers.add(s.ticker)
 
             elif msg_type == MessageType.RECOMMENDATION:
-                stocks = extract_recommendation_stocks(part)
+                stocks = extract_recommendation_stocks(part, action_type)
                 parsed_msg.stocks = stocks
                 for s in stocks:
                     all_tickers.add(s.ticker)
@@ -465,12 +562,12 @@ def parse_notification(text: str) -> ParseResponse:
                     all_tickers.add(s.ticker)
 
             elif msg_type == MessageType.HOLD:
-                stocks = extract_recommendation_stocks(part)
+                stocks = extract_recommendation_stocks(part, action_type="hold")
                 parsed_msg.stocks = stocks
                 for s in stocks:
                     all_tickers.add(s.ticker)
 
-            # Only add non-greeting messages (or greeting with no stocks)
+            # Only add non-greeting messages
             if msg_type != MessageType.GREETING or parsed_msg.stocks:
                 messages.append(parsed_msg)
 
@@ -478,13 +575,94 @@ def parse_notification(text: str) -> ParseResponse:
 
         i += 1
 
+    # ── Build deduplicated formatted output ──
+    # If same ticker appears in multiple messages, keep the version
+    # with the most complete price data
+    best_stocks: dict[str, ParsedStock] = {}
+
+    for msg in messages:
+        for stock in msg.stocks:
+            score = sum(1 for v in [
+                stock.defense_price, stock.min_target_low,
+                stock.min_target_high, stock.reasonable_target_low,
+                stock.reasonable_target_high, stock.entry_price,
+            ] if v is not None)
+
+            if stock.ticker not in best_stocks:
+                best_stocks[stock.ticker] = stock
+            else:
+                existing = best_stocks[stock.ticker]
+                existing_score = sum(1 for v in [
+                    existing.defense_price, existing.min_target_low,
+                    existing.min_target_high, existing.reasonable_target_low,
+                    existing.reasonable_target_high, existing.entry_price,
+                ] if v is not None)
+                if score > existing_score:
+                    best_stocks[stock.ticker] = stock
+
+    formatted_output = _build_formatted_output(list(best_stocks.values()))
+
     return ParseResponse(
         success=True,
         total_messages=len(messages),
         total_stocks=len(all_tickers),
         messages=messages,
         dates_found=dates_found,
+        formatted_output=formatted_output,
     )
+
+
+# ─── Display text helper ─────────────────────────────────────
+
+def parse_display_values(edited: EditedStock) -> EditedStock:
+    """
+    Parse user-edited display strings back into numeric values.
+
+    E.g. "53元" → defense_price=53.0
+         "68~69.5元" → min_target_low=68.0, min_target_high=69.5
+    """
+    # Defense price
+    if edited.defense_price_display and edited.defense_price_display != PENDING:
+        m = re.search(r"(\d+(?:\.\d+)?)", edited.defense_price_display)
+        if m:
+            edited.defense_price = float(m.group(1))
+
+    # Min target range
+    if edited.min_target_display and edited.min_target_display != PENDING:
+        m = re.search(
+            r"(\d+(?:\.\d+)?)\s*[~～至到]\s*(\d+(?:\.\d+)?)",
+            edited.min_target_display,
+        )
+        if m:
+            edited.min_target_low = float(m.group(1))
+            edited.min_target_high = float(m.group(2))
+        else:
+            single = re.search(r"(\d+(?:\.\d+)?)", edited.min_target_display)
+            if single:
+                edited.min_target_low = float(single.group(1))
+
+    # Reasonable target range
+    if (edited.reasonable_target_display
+            and edited.reasonable_target_display != PENDING):
+        m = re.search(
+            r"(\d+(?:\.\d+)?)\s*[~～至到]\s*(\d+(?:\.\d+)?)",
+            edited.reasonable_target_display,
+        )
+        if m:
+            edited.reasonable_target_low = float(m.group(1))
+            edited.reasonable_target_high = float(m.group(2))
+        else:
+            single = re.search(
+                r"(\d+(?:\.\d+)?)", edited.reasonable_target_display
+            )
+            if single:
+                edited.reasonable_target_low = float(single.group(1))
+
+    # Strategy notes
+    if edited.strategy_display and edited.strategy_display != PENDING:
+        edited.strategy_notes = edited.strategy_display
+
+    return edited
 
 
 # ─── API endpoints ────────────────────────────────────────────
@@ -494,6 +672,9 @@ async def parse_notifications(request: ParseRequest):
     """
     Parse advisory notification text into structured data.
     Does NOT write to database — preview only.
+
+    Returns fixed-format output with 6 fields per stock.
+    Fields that couldn't be parsed show "待定".
     """
     return parse_notification(request.text)
 
@@ -503,10 +684,12 @@ async def import_notifications(request: ImportRequest):
     """
     Parse advisory notification text AND import into Supabase.
 
-    Phase 1.4 — Full implementation. Writes to:
-      1. advisory_notifications (raw message text + type)
-      2. price_targets (defense/min/reasonable/entry, with is_latest versioning)
-      3. advisory_tracking (initial 'watching' status, skip if already tracked)
+    Supports two modes:
+      1. text-based: Parse raw text, then import (original flow)
+      2. edited_stocks: Import user-edited stocks directly (new flow)
+
+    When edited_stocks is provided, display values are parsed back
+    into numeric fields before writing to price_targets.
     """
     from datetime import date as date_type
     from supabase import create_client
@@ -522,115 +705,80 @@ async def import_notifications(request: ImportRequest):
                        "reason": "Supabase credentials not configured"}],
         )
 
-    supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
+    supabase = create_client(
+        settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY
+    )
 
-    # Step 1: Parse the text
-    parsed = parse_notification(request.text)
-
-    # Determine notification date from parsed dates, fallback to today
-    notification_date = str(date_type.today())
-    if parsed.dates_found:
-        # Use the latest date found (format: "2026/02/10" → "2026-02-10")
-        try:
-            notification_date = parsed.dates_found[-1].replace("/", "-")
-        except Exception:
-            pass
+    # Determine import source: edited_stocks takes priority over text parsing
+    if request.edited_stocks:
+        stocks_to_import = _prepare_edited_stocks(request.edited_stocks)
+        notification_date = str(date_type.today())
+    else:
+        # Parse from text
+        parsed = parse_notification(request.text)
+        notification_date = str(date_type.today())
+        if parsed.dates_found:
+            try:
+                notification_date = parsed.dates_found[-1].replace("/", "-")
+            except Exception:
+                pass
+        stocks_to_import = _prepare_parsed_stocks(
+            parsed, request.selected_tickers
+        )
 
     imported = 0
     skipped = 0
     details = []
 
-    # Deduplicate: if same ticker appears in multiple messages, keep the one
-    # with the most complete data (most non-null price fields)
-    best_stocks: dict[str, tuple[ParsedStock, str, str]] = {}  # ticker → (stock, msg_type, raw_text)
-
-    for msg in parsed.messages:
-        for stock in msg.stocks:
-            # Check if this ticker is in the selected list
-            if request.selected_tickers and stock.ticker not in request.selected_tickers:
-                continue
-
-            # Score completeness: count non-null price fields
-            score = sum(1 for v in [
-                stock.defense_price, stock.min_target_low, stock.min_target_high,
-                stock.reasonable_target_low, stock.reasonable_target_high,
-                stock.entry_price,
-            ] if v is not None)
-
-            if stock.ticker not in best_stocks or score > sum(1 for v in [
-                best_stocks[stock.ticker][0].defense_price,
-                best_stocks[stock.ticker][0].min_target_low,
-                best_stocks[stock.ticker][0].min_target_high,
-                best_stocks[stock.ticker][0].reasonable_target_low,
-                best_stocks[stock.ticker][0].reasonable_target_high,
-                best_stocks[stock.ticker][0].entry_price,
-            ] if v is not None):
-                best_stocks[stock.ticker] = (stock, msg.message_type, msg.raw_text)
-
-    # Count skipped tickers
-    all_parsed_tickers = set()
-    for msg in parsed.messages:
-        for stock in msg.stocks:
-            all_parsed_tickers.add(stock.ticker)
-
-    for ticker in all_parsed_tickers:
-        if request.selected_tickers and ticker not in request.selected_tickers:
-            skipped += 1
-            # Find the stock name
-            name = ""
-            for msg in parsed.messages:
-                for s in msg.stocks:
-                    if s.ticker == ticker:
-                        name = s.name
-                        break
-            details.append({
-                "ticker": ticker,
-                "name": name,
-                "action": "skipped",
-                "reason": "not in selected_tickers",
-            })
-
-    # Step 2: Write to Supabase for each selected stock
-    for ticker, (stock, msg_type, raw_text) in best_stocks.items():
+    for ticker, stock_data in stocks_to_import.items():
         try:
-            # 2a. Insert advisory_notifications (raw record)
+            # Insert advisory_notifications
             notif_res = supabase.table("advisory_notifications").insert({
                 "user_id": request.user_id,
                 "notification_date": notification_date,
-                "message_type": msg_type,
-                "raw_text": raw_text[:2000],
-                "source": request.source.value if hasattr(request.source, 'value') else str(request.source),
+                "message_type": stock_data.get("message_type", "recommendation"),
+                "raw_text": stock_data.get("raw_text", "")[:2000],
+                "source": (
+                    request.source.value
+                    if hasattr(request.source, 'value')
+                    else str(request.source)
+                ),
             }).execute()
 
             notification_id = None
             if notif_res.data and len(notif_res.data) > 0:
                 notification_id = notif_res.data[0].get("id")
 
-            # 2b. Retire old price_targets (set is_latest = false)
+            # Retire old price_targets
             supabase.table("price_targets").update({
                 "is_latest": False,
-            }).eq("user_id", request.user_id).eq("ticker", ticker).eq("is_latest", True).execute()
+            }).eq(
+                "user_id", request.user_id
+            ).eq(
+                "ticker", ticker
+            ).eq(
+                "is_latest", True
+            ).execute()
 
-            # 2c. Insert new price_target with is_latest = true
+            # Insert new price_target
             target_data = {
                 "user_id": request.user_id,
                 "ticker": ticker,
-                "stock_name": stock.name or "",
+                "stock_name": stock_data.get("name", ""),
                 "notification_id": notification_id,
-                "defense_price": stock.defense_price,
-                "min_target_low": stock.min_target_low,
-                "min_target_high": stock.min_target_high,
-                "reasonable_target_low": stock.reasonable_target_low,
-                "reasonable_target_high": stock.reasonable_target_high,
-                "entry_price": stock.entry_price,
-                "strategy_notes": stock.strategy_notes or "",
+                "defense_price": stock_data.get("defense_price"),
+                "min_target_low": stock_data.get("min_target_low"),
+                "min_target_high": stock_data.get("min_target_high"),
+                "reasonable_target_low": stock_data.get("reasonable_target_low"),
+                "reasonable_target_high": stock_data.get("reasonable_target_high"),
+                "entry_price": stock_data.get("entry_price"),
+                "strategy_notes": stock_data.get("strategy_notes", ""),
                 "effective_date": notification_date,
                 "is_latest": True,
             }
             supabase.table("price_targets").insert(target_data).execute()
 
-            # 2d. UPSERT advisory_tracking (initial 'watching', don't overwrite existing)
-            #     Use onConflict with ignoreDuplicates to skip if already tracked
+            # UPSERT advisory_tracking
             supabase.table("advisory_tracking").upsert(
                 {
                     "user_id": request.user_id,
@@ -644,19 +792,25 @@ async def import_notifications(request: ImportRequest):
             imported += 1
             details.append({
                 "ticker": ticker,
-                "name": stock.name,
+                "name": stock_data.get("name", ""),
                 "action": "imported",
-                "defense_price": stock.defense_price,
-                "min_target": f"{stock.min_target_low}~{stock.min_target_high}"
-                    if stock.min_target_low else None,
+                "defense_price": stock_data.get("defense_price"),
+                "min_target": (
+                    f"{stock_data['min_target_low']}~{stock_data['min_target_high']}"
+                    if stock_data.get("min_target_low") else None
+                ),
             })
-            logger.info(f"Imported {stock.name}({ticker}) — defense={stock.defense_price}")
+            logger.info(
+                "Imported %s(%s) — defense=%s",
+                stock_data.get("name", ""), ticker,
+                stock_data.get("defense_price"),
+            )
 
         except Exception as e:
             logger.error(f"Failed to import {ticker}: {e}")
             details.append({
                 "ticker": ticker,
-                "name": stock.name,
+                "name": stock_data.get("name", ""),
                 "action": "error",
                 "reason": str(e)[:200],
             })
@@ -667,3 +821,90 @@ async def import_notifications(request: ImportRequest):
         skipped_count=skipped,
         details=details,
     )
+
+
+# ─── Import helpers ───────────────────────────────────────────
+
+def _prepare_edited_stocks(
+    edited_stocks: list[EditedStock],
+) -> dict[str, dict]:
+    """
+    Convert user-edited stocks into import-ready dicts.
+
+    Parses display strings back into numeric values so the DB
+    gets clean numbers even after manual editing.
+    """
+    result: dict[str, dict] = {}
+
+    for edited in edited_stocks:
+        # Parse display values → numeric fields
+        edited = parse_display_values(edited)
+
+        result[edited.ticker] = {
+            "name": edited.name,
+            "defense_price": edited.defense_price,
+            "min_target_low": edited.min_target_low,
+            "min_target_high": edited.min_target_high,
+            "reasonable_target_low": edited.reasonable_target_low,
+            "reasonable_target_high": edited.reasonable_target_high,
+            "entry_price": edited.entry_price,
+            "strategy_notes": edited.strategy_notes or edited.strategy_display,
+            "message_type": "recommendation",
+            "raw_text": "",
+        }
+
+    return result
+
+
+def _prepare_parsed_stocks(
+    parsed: ParseResponse,
+    selected_tickers: list[str],
+) -> dict[str, dict]:
+    """
+    Deduplicate and prepare parsed stocks for import.
+
+    Same logic as before: keeps version with most complete price data.
+    """
+    best: dict[str, tuple[ParsedStock, str, str]] = {}
+
+    for msg in parsed.messages:
+        for stock in msg.stocks:
+            if selected_tickers and stock.ticker not in selected_tickers:
+                continue
+
+            score = sum(1 for v in [
+                stock.defense_price, stock.min_target_low,
+                stock.min_target_high, stock.reasonable_target_low,
+                stock.reasonable_target_high, stock.entry_price,
+            ] if v is not None)
+
+            if stock.ticker not in best:
+                best[stock.ticker] = (stock, msg.message_type, msg.raw_text)
+            else:
+                existing_score = sum(1 for v in [
+                    best[stock.ticker][0].defense_price,
+                    best[stock.ticker][0].min_target_low,
+                    best[stock.ticker][0].min_target_high,
+                    best[stock.ticker][0].reasonable_target_low,
+                    best[stock.ticker][0].reasonable_target_high,
+                    best[stock.ticker][0].entry_price,
+                ] if v is not None)
+                if score > existing_score:
+                    best[stock.ticker] = (stock, msg.message_type, msg.raw_text)
+
+    result: dict[str, dict] = {}
+    for ticker, (stock, msg_type, raw_text) in best.items():
+        result[ticker] = {
+            "name": stock.name,
+            "defense_price": stock.defense_price,
+            "min_target_low": stock.min_target_low,
+            "min_target_high": stock.min_target_high,
+            "reasonable_target_low": stock.reasonable_target_low,
+            "reasonable_target_high": stock.reasonable_target_high,
+            "entry_price": stock.entry_price,
+            "strategy_notes": stock.strategy_notes,
+            "message_type": msg_type,
+            "raw_text": raw_text,
+        }
+
+    return result
