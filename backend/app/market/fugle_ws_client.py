@@ -217,6 +217,16 @@ class FugleWSClient:
                 self._reconnect_delay = RECONNECT_BASE_DELAY
             self._handle_message(message)
 
+            # Periodic coverage summary (every 300 messages ≈ every few minutes)
+            if self._message_count % 300 == 0:
+                missing = self._subscribed - self._seen_symbols
+                logger.info(
+                    "Fugle WS coverage: %d/%d symbols active, %d msgs total%s",
+                    len(self._seen_symbols), len(self._subscribed),
+                    self._message_count,
+                    f" | NOT covered: {missing}" if missing else "",
+                )
+
         def _on_disconnect(code, reason):
             self._connected = False
             logger.warning(f"Fugle WS disconnected: code={code} reason={reason}")
@@ -370,7 +380,9 @@ class FugleWSClient:
     async def _upsert_market_data(self, data: dict) -> None:
         """Async wrapper for Supabase upsert."""
         try:
-            self._supabase.table("market_data").upsert(data).execute()
+            self._supabase.table("market_data").upsert(
+                data, on_conflict='ticker'
+            ).execute()
         except Exception as e:
             logger.error(f"Fugle→Supabase upsert error [{data.get('ticker')}]: {e}")
 
