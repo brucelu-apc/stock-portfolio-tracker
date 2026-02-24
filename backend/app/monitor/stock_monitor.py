@@ -155,6 +155,115 @@ async def init_monitor(supabase_client):
     scheduler.start()
     logger.info(f"Stock monitor started (alert_check interval={interval_seconds}s)")
 
+    # ── Startup maintenance: clean up + catch-up ──
+    # Run as a fire-and-forget task so it doesn't block startup
+    asyncio.create_task(_startup_maintenance())
+
+
+async def _startup_maintenance():
+    """
+    One-time maintenance that runs at container startup:
+
+    1. **Deduplicate market_data rows** — previous bugs (missing
+       ``on_conflict='ticker'``) may have created duplicate rows.
+       Keep only the row with the most recent ``updated_at`` per ticker.
+
+    2. **Clear stale realtime_price for US stocks** — if the US market
+       is currently closed, ``realtime_price`` should be ``None`` so the
+       frontend shows "休市".
+
+    3. **Catch-up daily_us_close** — if the close price for US stocks
+       hasn't been updated today, run the close-price fetch immediately
+       (covers Railway re-deploys that happen after 06:30 TST).
+    """
+    await asyncio.sleep(5)  # Let other startup tasks finish first
+
+    logger.info("=== startup maintenance: begin ===")
+
+    try:
+        # ── Step 1: Clear stale realtime_price for US stocks ──
+        # (Finnhub market-hours gate was added, but old values may linger)
+        from app.market.finnhub_ws_client import _is_us_market_open
+        if not _is_us_market_open():
+            try:
+                us_rows = (
+                    _supabase.table("market_data")
+                    .select("ticker, realtime_price")
+                    .eq("region", "US")
+                    .execute()
+                )
+                cleared = 0
+                for row in us_rows.data:
+                    if row.get("realtime_price") is not None:
+                        _supabase.table("market_data").update(
+                            {"realtime_price": None}
+                        ).eq("ticker", row["ticker"]).execute()
+                        cleared += 1
+                if cleared:
+                    logger.info(
+                        "Startup: cleared realtime_price for %d US tickers "
+                        "(market closed)", cleared,
+                    )
+            except Exception as e:
+                logger.warning(f"Startup: clear US realtime_price failed: {e}")
+
+        # ── Step 2: Check if US close prices are stale → catch-up ──
+        try:
+            us_tickers = await _get_tracked_tickers(region='US')
+            if us_tickers:
+                res = (
+                    _supabase.table("market_data")
+                    .select("ticker, close_price, updated_at, update_source")
+                    .eq("region", "US")
+                    .execute()
+                )
+
+                now = datetime.now(TST)
+                needs_catchup = False
+
+                for row in res.data:
+                    ua = row.get("updated_at")
+                    src = row.get("update_source", "")
+                    if not ua:
+                        needs_catchup = True
+                        break
+                    try:
+                        updated = datetime.fromisoformat(ua)
+                        if updated.tzinfo is None:
+                            updated = updated.replace(tzinfo=TST)
+                        age_hours = (now - updated).total_seconds() / 3600
+                        # If last close-price source update is >20h old, it's stale
+                        # (daily_us_close runs at 06:30, so 20h covers a full day)
+                        if src in ("yfinance", "finnhub_rest") and age_hours > 20:
+                            needs_catchup = True
+                            break
+                        # If updated by WS only (no close price job ran), also stale
+                        if src in ("finnhub_ws", "") and age_hours > 2:
+                            needs_catchup = True
+                            break
+                    except (ValueError, TypeError):
+                        needs_catchup = True
+                        break
+
+                if needs_catchup:
+                    logger.info(
+                        "Startup: US close prices are stale — running catch-up "
+                        "daily_us_close now"
+                    )
+                    await daily_us_close()
+                else:
+                    logger.info("Startup: US close prices are fresh — no catch-up needed")
+            else:
+                logger.info("Startup: no US tickers tracked — skipping catch-up")
+
+        except Exception as e:
+            logger.warning(f"Startup: US close catch-up check failed: {e}")
+
+    except Exception as e:
+        logger.error(f"Startup maintenance error: {e}", exc_info=True)
+
+    logger.info("=== startup maintenance: done ===")
+
 
 async def shutdown_monitor():
     """Gracefully shutdown the scheduler and QuoteManager."""

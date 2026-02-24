@@ -224,7 +224,7 @@ async def fetch_close_prices(
             )
             results.update(yf_results)
 
-    # ── US stocks: yfinance ──
+    # ── US stocks: yfinance → Finnhub REST fallback ──
     if us_tickers:
         us_ticker_codes = [item['ticker'] for item in us_tickers]
         logger.info(f"Fetching {len(us_ticker_codes)} US tickers via yfinance...")
@@ -232,6 +232,18 @@ async def fetch_close_prices(
             us_ticker_codes, region='US', existing_sectors=existing_sectors
         )
         results.update(yf_results)
+
+        # Fallback: any US tickers yfinance missed → try Finnhub REST API
+        missing_us = [t for t in us_ticker_codes if t not in results]
+        if missing_us:
+            logger.info(
+                "yfinance missed %d US tickers, trying Finnhub REST: %s",
+                len(missing_us), missing_us,
+            )
+            finnhub_results = await _fetch_via_finnhub_rest(
+                missing_us, existing_sectors=existing_sectors
+            )
+            results.update(finnhub_results)
 
     return results
 
@@ -405,3 +417,91 @@ async def fetch_exchange_rate() -> Optional[dict]:
         logger.error(f"Failed to fetch USDTWD: {e}")
 
     return None
+
+
+# ─── Finnhub REST API Fallback (US stocks) ────────────────────
+
+FINNHUB_QUOTE_URL = "https://finnhub.io/api/v1/quote"
+
+
+async def _fetch_via_finnhub_rest(
+    ticker_codes: list[str],
+    existing_sectors: dict[str, str] | None = None,
+) -> dict[str, dict]:
+    """
+    Fetch US stock close prices via Finnhub REST API ``/quote`` endpoint.
+
+    This is a **fallback** for when yfinance fails (common on cloud servers
+    like Railway because Yahoo Finance blocks their IPs).
+
+    Finnhub free-tier quota: 60 API calls / minute.
+
+    Response format::
+
+        {"c": 134.99, "d": -1.01, "dp": -0.7426,
+         "h": 137.98, "l": 134.43, "o": 136.06,
+         "pc": 136.0, "t": 1700000000}
+
+        c  = current price (= close when market is closed)
+        pc = previous close
+    """
+    import requests
+
+    existing_sectors = existing_sectors or {}
+
+    try:
+        from app.config import get_settings
+        api_key = get_settings().FINNHUB_API_KEY
+    except Exception:
+        api_key = ""
+
+    if not api_key:
+        logger.warning("Finnhub REST fallback skipped: no FINNHUB_API_KEY")
+        return {}
+
+    results: dict[str, dict] = {}
+
+    for idx, ticker in enumerate(ticker_codes):
+        try:
+            if idx > 0:
+                await asyncio.sleep(1.1)  # Stay within 60 req/min
+
+            resp = requests.get(
+                FINNHUB_QUOTE_URL,
+                params={"symbol": ticker, "token": api_key},
+                timeout=10,
+            )
+
+            if resp.status_code == 429:
+                logger.warning("Finnhub REST rate limited (429) — stopping")
+                break
+
+            resp.raise_for_status()
+            data = resp.json()
+
+            price = data.get("c")  # current / close price
+            prev_close = data.get("pc")  # previous close
+
+            if not price or not is_valid_number(price) or float(price) <= 0:
+                logger.warning(f"Finnhub REST: no valid price for {ticker}")
+                continue
+
+            results[ticker] = {
+                "current_price": float(price),
+                "prev_close": float(prev_close) if prev_close and is_valid_number(prev_close) else float(price),
+                "sector": existing_sectors.get(ticker, "Unknown"),
+                "region": "US",
+            }
+            logger.info(
+                "  Finnhub REST: %s → close=%.2f, prev_close=%.2f",
+                ticker, float(price),
+                float(prev_close) if prev_close else 0,
+            )
+
+        except Exception as e:
+            logger.error(f"Finnhub REST error for {ticker}: {e}")
+
+    if results:
+        logger.info(f"Finnhub REST fallback: {len(results)}/{len(ticker_codes)} tickers")
+
+    return results
