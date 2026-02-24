@@ -205,13 +205,18 @@ async def alert_check():
 
 def _is_tw_ws_healthy(max_stale_seconds: float = 90.0) -> bool:
     """
-    Check whether a WebSocket feed (Fugle or Shioaji) is actively
-    delivering Taiwan stock prices.
+    Check whether a WebSocket feed (Fugle or Shioaji) is **actively
+    delivering useful Taiwan stock prices** to the DB.
 
     Returns True ONLY when **all** of the following hold:
       1. QuoteManager is running
       2. At least one TW-capable source reports ``connected = True``
       3. That source received a message within *max_stale_seconds*
+      4. That source has actually covered at least ONE subscribed symbol
+         (``symbols_covered > 0``).  Without this check, a connected
+         feed that receives only heartbeats / subscription confirmations
+         would be considered "healthy" and block the twstock fallback,
+         leaving the entire dashboard with no price data.
 
     If any condition fails, the twstock fallback should run.
     """
@@ -229,6 +234,16 @@ def _is_tw_ws_healthy(max_stale_seconds: float = 90.0) -> bool:
                 continue
             if not src.get("connected"):
                 continue
+
+            # ── Coverage gate: must have delivered at least 1 symbol ──
+            symbols_covered = src.get("symbols_covered", 0)
+            if symbols_covered == 0:
+                logger.debug(
+                    "WS %s connected but 0 symbols covered — not healthy",
+                    src.get("source"),
+                )
+                continue  # Try next source
+
             # Check freshness — a connected but stale feed is NOT healthy
             last_msg = src.get("last_message_at")
             if last_msg:
@@ -238,7 +253,7 @@ def _is_tw_ws_healthy(max_stale_seconds: float = 90.0) -> bool:
                     last_msg = last_msg.replace(tzinfo=TST)
                 age = (now - last_msg).total_seconds()
                 if age <= max_stale_seconds:
-                    return True  # Fresh data — WS is healthy
+                    return True  # Fresh data AND coverage — WS is healthy
             # connected but no messages yet → not healthy
         return False
     except Exception as e:

@@ -272,30 +272,14 @@ class FugleWSClient:
         """
         Process a Fugle trades message and write to Supabase.
 
-        Fugle SDK v1.x message shape (trades channel):
-        {
-            "event": "data",
-            "data": {
-                "symbol": "2330",
-                "type": "EQUITY",
-                "exchange": "TWSE",
-                "market": "TSE",
-                "bid": 567,
-                "ask": 568,
-                "price": 568,
-                "size": 4778,
-                "volume": 54538,
-                "isClose": true,
-                "time": 1685338200000000,
-                "serial": 6652422
-            },
-            "id": "<CHANNEL_ID>",
-            "channel": "trades"
-        }
+        The Fugle SDK may deliver messages in several formats depending on
+        the SDK version, channel, and subscription type.  We try multiple
+        extraction strategies to be resilient to format changes.
 
-        NOTE: In the current SDK, ``symbol`` and ``price`` are inside
-        ``data`` directly — there is no ``trade`` sub-object.
-        For backward compatibility we also check the old location.
+        Known formats:
+          - SDK v1.x trades: ``{"event":"data","data":{"symbol":"2330","price":568,...}}``
+          - SDK v2.x / snapshot: top-level ``{"symbol":"2330","price":568,...}``
+          - Heartbeat / ack:    ``{"event":"heartbeat",...}`` or ``{"event":"subscribed",...}``
         """
         try:
             # Defensive: parse string messages
@@ -307,32 +291,114 @@ class FugleWSClient:
             if not isinstance(message, dict):
                 return
 
-            event = message.get("event")
-            if event != "data":
-                return  # heartbeat, subscribed confirmation, etc.
+            # ── Diagnostic: log first 5 messages' structure so we can
+            #    debug format mismatches in Railway logs ──
+            if self._message_count <= 5:
+                # Truncate to avoid huge log lines; keep keys + first-level values
+                sample = {k: (v if not isinstance(v, dict) else f"<dict keys={list(v.keys())}>")
+                          for k, v in list(message.items())[:10]}
+                logger.info(
+                    "Fugle WS msg #%d structure: %s",
+                    self._message_count, sample,
+                )
 
-            data = message.get("data", {})
+            event = message.get("event", "")
 
-            # ── Symbol: current SDK puts it inside ``data``,
-            #    older versions had it at the top level. ──
-            symbol = data.get("symbol") or message.get("symbol", "")
-            if not symbol:
-                logger.debug("Fugle WS: no symbol in message, skipping")
+            # ── Skip non-data events ──
+            # Accept "data" and also empty-event messages (some SDK versions
+            # deliver trade data without an "event" wrapper).
+            if event and event != "data":
+                # Log unexpected event types (but not heartbeats, which are normal)
+                if event not in ("heartbeat", "subscribed", "unsubscribed", "pong"):
+                    if self._message_count <= 20:
+                        logger.debug("Fugle WS: skipping event=%s", event)
                 return
 
-            # ── Price: current SDK has ``price`` directly in ``data``;
-            #    older versions nested it under ``data.trade.price``. ──
-            trade = data.get("trade", data)  # backward-compat fallback
-            price = trade.get("price")
+            # ── Extract the data payload ──
+            # Strategy 1: nested under "data" key (SDK v1.x standard)
+            data = message.get("data", {})
+            if isinstance(data, str):
+                # Some SDK versions deliver data as a JSON string
+                try:
+                    data = json.loads(data)
+                except (json.JSONDecodeError, ValueError):
+                    data = {}
+
+            # ── Symbol extraction: try multiple locations ──
+            symbol = (
+                data.get("symbol")           # SDK v1.x: inside data
+                or message.get("symbol")     # SDK v2.x: top-level
+                or data.get("code")          # alternative key
+                or message.get("code")       # alternative key
+                or ""
+            )
+            if not symbol:
+                # Log first few failures for debugging
+                if self._message_count <= 20 and (event == "data" or not event):
+                    logger.warning(
+                        "Fugle WS: no symbol found in msg #%d (event=%s, "
+                        "data_keys=%s, msg_keys=%s)",
+                        self._message_count, event,
+                        list(data.keys())[:8] if isinstance(data, dict) else "N/A",
+                        list(message.keys())[:8],
+                    )
+                return
+
+            # ── Price extraction: try multiple locations and keys ──
+            price = None
+
+            # Try 1: data.price (SDK v1.x)
+            if isinstance(data, dict):
+                price = data.get("price")
+
+            # Try 2: data.trade.price (older SDK)
+            if price is None and isinstance(data, dict):
+                trade_obj = data.get("trade")
+                if isinstance(trade_obj, dict):
+                    price = trade_obj.get("price")
+
+            # Try 3: top-level price (SDK v2.x / snapshot)
+            if price is None:
+                price = message.get("price")
+
+            # Try 4: closePrice or lastPrice (alternative names)
+            if price is None and isinstance(data, dict):
+                price = data.get("closePrice") or data.get("lastPrice") or data.get("close")
+
+            if price is None:
+                # No price — try bid/ask midpoint as last resort
+                bid = None
+                ask = None
+                if isinstance(data, dict):
+                    bid = data.get("bid")
+                    ask = data.get("ask")
+                if bid is not None and ask is not None:
+                    try:
+                        bid_f, ask_f = float(bid), float(ask)
+                        if bid_f > 0 and ask_f > 0:
+                            price = (bid_f + ask_f) / 2
+                    except (ValueError, TypeError):
+                        pass
+
             if price is None or float(price) <= 0:
+                if self._message_count <= 20 and symbol:
+                    logger.warning(
+                        "Fugle WS: no valid price for %s in msg #%d "
+                        "(data_keys=%s)",
+                        symbol, self._message_count,
+                        list(data.keys())[:10] if isinstance(data, dict) else "N/A",
+                    )
                 return
 
             price = float(price)
+
+            # ── Volume ──
+            trade_obj = data.get("trade", data) if isinstance(data, dict) else {}
             volume = (
-                trade.get("size")
-                or trade.get("volume")
-                or data.get("size")
-                or data.get("volume")
+                trade_obj.get("size")
+                or trade_obj.get("volume")
+                or data.get("size") if isinstance(data, dict) else None
+                or data.get("volume") if isinstance(data, dict) else None
             )
 
             upsert = {
@@ -346,20 +412,20 @@ class FugleWSClient:
             if volume is not None:
                 upsert["volume"] = int(volume)
 
-            # Additional OHLC fields if present (from candles channel or trade extras)
-            for key, col in [("open", "day_open"), ("high", "day_high"), ("low", "day_low")]:
-                val = data.get(key) or trade.get(key)
-                if val is not None:
-                    upsert[col] = float(val)
+            # Additional OHLC fields if present
+            if isinstance(data, dict):
+                for key, col in [("open", "day_open"), ("high", "day_high"), ("low", "day_low")]:
+                    val = data.get(key) or (trade_obj.get(key) if isinstance(trade_obj, dict) else None)
+                    if val is not None:
+                        upsert[col] = float(val)
 
             # Log first message per symbol for debugging (track coverage)
             if symbol not in self._seen_symbols:
                 self._seen_symbols.add(symbol)
                 logger.info(
-                    "Fugle WS first price: %s = %.2f (vol=%s, src=%s) "
+                    "Fugle WS first price: %s = %.2f (vol=%s) "
                     "[%d/%d symbols covered]",
                     symbol, price, volume,
-                    "data" if "price" in data else "data.trade",
                     len(self._seen_symbols), len(self._subscribed),
                 )
 
