@@ -66,7 +66,9 @@ class FugleWSClient:
 
         # Reconnect — use a lock to prevent parallel reconnect storms
         self._reconnect_delay = RECONNECT_BASE_DELAY
-        self._reconnect_max = reconnect_max_delay
+        # Ensure max delay is at least MAX_CONN_BACKOFF so "max connections"
+        # errors don't get their backoff capped too low
+        self._reconnect_max = max(reconnect_max_delay, MAX_CONN_BACKOFF)
         self._reconnect_timer: Optional[threading.Timer] = None
         self._reconnect_lock = threading.Lock()
         self._reconnecting = False   # True while a reconnect is in progress
@@ -238,14 +240,16 @@ class FugleWSClient:
 
         # Start connection (runs on SDK's internal thread)
         try:
+            logger.info("Fugle WS connecting to server …")
             self._stock.connect()
         except Exception as e:
-            logger.error(f"Fugle WS connect failed: {e}")
+            logger.error(f"Fugle WS connect failed: {e}", exc_info=True)
             # Detect max-connections to use longer backoff
             if "Maximum number of connections" in str(e):
                 self._reconnect_delay = max(
                     self._reconnect_delay, MAX_CONN_BACKOFF
                 )
+            # ALWAYS schedule reconnect on failure (if we should still run)
             if self._should_run and not self._reconnecting:
                 self._schedule_reconnect()
 
@@ -400,8 +404,13 @@ class FugleWSClient:
         """Actual reconnect attempt (runs on Timer thread)."""
         try:
             if not self._should_run:
+                logger.info("Fugle WS reconnect cancelled (_should_run=False)")
                 return
-            logger.info("Fugle WS attempting reconnect …")
+            logger.info(
+                "Fugle WS attempting reconnect (delay was %.0fs, next=%.0fs) …",
+                self._reconnect_delay / 2,  # approximate: was halved after schedule
+                self._reconnect_delay,
+            )
 
             # Clean up old SDK client to avoid stale connection leaks
             if self._stock:
@@ -414,6 +423,11 @@ class FugleWSClient:
             self._connected = False
 
             self._init_client()
+        except Exception as e:
+            logger.error(f"Fugle WS reconnect failed unexpectedly: {e}", exc_info=True)
+            # Schedule another attempt if we should still run
+            if self._should_run:
+                self._schedule_reconnect()
         finally:
             with self._reconnect_lock:
                 self._reconnecting = False

@@ -102,13 +102,19 @@ async def init_monitor(supabase_client):
     # When WS feeds (Fugle/Shioaji) are active AND healthy, this job
     # short-circuits.  When they are down or disabled, twstock kicks in
     # automatically so the dashboard never shows "休市" during market hours.
+    #
+    # Interval is 90s (not 30s) because twstock fetches 30+ tickers with
+    # TWSE rate limits (~2s between batches), each run takes ~60-90s.
+    # misfire_grace_time=120 prevents "missed by ~1s" spam when alert_check
+    # or a previous twstock run slightly delays the trigger.
     scheduler.add_job(
         realtime_tw_monitor,
-        IntervalTrigger(seconds=interval_seconds, timezone=TST),
+        IntervalTrigger(seconds=90, timezone=TST),
         id='realtime_tw_fallback',
         name='Taiwan Real-time Fallback (twstock)',
         replace_existing=True,
         max_instances=1,
+        misfire_grace_time=120,
     )
     if fugle_enabled or shioaji_enabled:
         logger.info(
@@ -405,11 +411,12 @@ async def _update_market_data_batch(
                 upsert_data["day_low"] = data['day_low']
             if data.get('volume'):
                 upsert_data["volume"] = data['volume']
-            # TWSE API fallback provides prev_close and name
+            # TWSE API fallback provides prev_close
             if data.get('prev_close'):
                 upsert_data["prev_close"] = data['prev_close']
-            if data.get('name'):
-                upsert_data["name"] = data['name']
+            # NOTE: Do NOT include 'name' — market_data table has no such column.
+            # Including it causes Supabase 400 (PGRST204) and blocks the entire
+            # upsert for that ticker.
 
             _supabase.table("market_data").upsert(
                 upsert_data, on_conflict='ticker'
