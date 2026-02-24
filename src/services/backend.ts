@@ -17,7 +17,14 @@ export interface ParsedStock {
   reasonable_target_high: number | null
   entry_price: number | null
   strategy_notes: string
-  action_type: string  // "buy" | "sell" | "" — per-stock action for compound messages
+  action_type: string  // "buy" | "sell" | "hold" | "institutional" | ""
+  // Fixed-format display fields (always present, default "待定")
+  display_name: string
+  action_signal: string
+  defense_price_display: string
+  min_target_display: string
+  reasonable_target_display: string
+  strategy_display: string
 }
 
 export interface ParsedMessage {
@@ -28,12 +35,53 @@ export interface ParsedMessage {
   market_resistance: number | null
 }
 
+/** Fixed-format output item from formatted_output — editable by user */
+export interface FormattedStockOutput {
+  ticker: string
+  name: string
+  display_name: string
+  action_signal: string
+  defense_price_display: string
+  min_target_display: string
+  reasonable_target_display: string
+  strategy_display: string
+  // Raw values
+  defense_price: number | null
+  min_target_low: number | null
+  min_target_high: number | null
+  reasonable_target_low: number | null
+  reasonable_target_high: number | null
+  entry_price: number | null
+  action_type: string
+}
+
+/** User-edited stock for import */
+export interface EditedStock {
+  ticker: string
+  name: string
+  display_name: string
+  action_signal: string
+  defense_price_display: string
+  min_target_display: string
+  reasonable_target_display: string
+  strategy_display: string
+  defense_price: number | null
+  min_target_low: number | null
+  min_target_high: number | null
+  reasonable_target_low: number | null
+  reasonable_target_high: number | null
+  entry_price: number | null
+  strategy_notes: string
+  action_type: string
+}
+
 export interface ParseResponse {
   success: boolean
   total_messages: number
   total_stocks: number
   messages: ParsedMessage[]
   dates_found: string[]
+  formatted_output: FormattedStockOutput[]
 }
 
 export interface ImportResponse {
@@ -106,22 +154,34 @@ export async function parseNotification(text: string, source = 'dashboard'): Pro
 
 /**
  * Parse and import notification into Supabase.
+ *
+ * Supports two modes:
+ *  1. text-based: provide text + selectedTickers (original flow)
+ *  2. edited_stocks: provide user-edited stocks directly (new flow)
  */
 export async function importNotification(
   text: string,
   userId: string,
   selectedTickers: string[] = [],
-  source = 'dashboard'
+  source = 'dashboard',
+  editedStocks: EditedStock[] = [],
 ): Promise<ImportResponse> {
+  const body: Record<string, unknown> = {
+    text,
+    source,
+    user_id: userId,
+    selected_tickers: selectedTickers,
+  }
+
+  // When edited_stocks is provided, backend uses it instead of re-parsing text
+  if (editedStocks.length > 0) {
+    body.edited_stocks = editedStocks
+  }
+
   const response = await fetch(`${BACKEND_URL}/api/parse/import`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      text,
-      source,
-      user_id: userId,
-      selected_tickers: selectedTickers,
-    }),
+    body: JSON.stringify(body),
   })
 
   if (!response.ok) {

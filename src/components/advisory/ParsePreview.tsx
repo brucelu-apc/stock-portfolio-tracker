@@ -1,13 +1,17 @@
 /**
- * ParsePreview — Displays parsed notification results with stock selection.
+ * ParsePreview — Displays parsed notification results with FIXED output format.
  *
- * Features:
- *  - Checkbox selection for individual stocks
- *  - Color-coded message types (recommendation, buy, sell, etc.)
- *  - Import selected stocks to Supabase
- *  - Forward selected stocks to LINE/Telegram (Phase 4)
+ * Every stock shows 6 fields (待定 for missing values):
+ *   1. 股票名稱(股票代號)
+ *   2. 操作訊號
+ *   3. 防守價
+ *   4. 最小漲幅
+ *   5. 合理漲幅
+ *   6. 操作策略
+ *
+ * All fields are editable inline before import.
  */
-import { useState, useMemo } from 'react'
+import { useState, useCallback } from 'react'
 import {
   Box,
   VStack,
@@ -18,17 +22,27 @@ import {
   Badge,
   Divider,
   Flex,
-  SimpleGrid,
   useToast,
-  Tooltip,
   Tag,
   TagLabel,
+  Input,
+  IconButton,
+  Tooltip,
 } from '@chakra-ui/react'
+import { CheckIcon, CloseIcon, EditIcon } from '@chakra-ui/icons'
 import { useDisclosure } from '@chakra-ui/react'
-import { type ParseResponse, type ParsedStock, importNotification, quickForwardStocks } from '../../services/backend'
+import {
+  type ParseResponse,
+  type FormattedStockOutput,
+  type EditedStock,
+  importNotification,
+  quickForwardStocks,
+} from '../../services/backend'
 import { StockForwardModal } from './StockForwardModal'
 
 type ForwardModalMode = 'forward' | 'manage'
+
+const PENDING = '待定'
 
 interface ParsePreviewProps {
   result: ParseResponse
@@ -37,16 +51,25 @@ interface ParsePreviewProps {
   onImportDone?: () => void
 }
 
-// Message type display config
-const MSG_TYPE_CONFIG: Record<string, { label: string; color: string }> = {
-  market_analysis: { label: '大盤解析', color: 'purple' },
-  recommendation: { label: '個股推薦', color: 'blue' },
-  institutional: { label: '法人鎖碼', color: 'orange' },
-  buy_signal: { label: '買進訊號', color: 'green' },
-  hold: { label: '續抱', color: 'teal' },
-  sell_signal: { label: '賣出訊號', color: 'red' },
-  greeting: { label: '問候', color: 'gray' },
+// Action signal → color mapping
+const SIGNAL_COLOR: Record<string, string> = {
+  '買進建立': 'green',
+  '賣出': 'red',
+  '續抱': 'teal',
+  '法人鎖碼股': 'orange',
 }
+
+// The 6 fixed display fields (key → label)
+const DISPLAY_FIELDS: Array<{
+  key: keyof FormattedStockOutput
+  label: string
+  color: string
+}> = [
+  { key: 'defense_price_display', label: '防守價', color: 'red' },
+  { key: 'min_target_display', label: '最小漲幅', color: 'green' },
+  { key: 'reasonable_target_display', label: '合理漲幅', color: 'orange' },
+  { key: 'strategy_display', label: '操作策略', color: 'gray' },
+]
 
 export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePreviewProps) => {
   const toast = useToast()
@@ -55,29 +78,22 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
   const [forwardModalMode, setForwardModalMode] = useState<ForwardModalMode>('forward')
   const forwardModal = useDisclosure()
 
-  // Deduplicate stocks across all messages
-  const allStocks = useMemo(() => {
-    const map = new Map<string, ParsedStock & { messageType: string }>()
-    result.messages.forEach((msg) => {
-      msg.stocks.forEach((stock) => {
-        // Keep the most informative version (one with more target prices)
-        const existing = map.get(stock.ticker)
-        if (
-          !existing ||
-          (stock.min_target_low && !existing.min_target_low) ||
-          (stock.defense_price && !existing.defense_price)
-        ) {
-          map.set(stock.ticker, { ...stock, messageType: msg.message_type })
-        }
-      })
-    })
-    return Array.from(map.values())
-  }, [result])
+  // Use formatted_output from backend (deduplicated, fixed format)
+  const [stocks, setStocks] = useState<FormattedStockOutput[]>(
+    () => result.formatted_output || []
+  )
 
   // Selection state
   const [selected, setSelected] = useState<Set<string>>(
-    new Set(allStocks.map((s) => s.ticker))
+    new Set(stocks.map((s) => s.ticker))
   )
+
+  // Editing state: which stock+field is being edited
+  const [editingCell, setEditingCell] = useState<{
+    ticker: string
+    field: string
+  } | null>(null)
+  const [editValue, setEditValue] = useState('')
 
   const toggleStock = (ticker: string) => {
     setSelected((prev) => {
@@ -91,8 +107,50 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
     })
   }
 
-  const selectAll = () => setSelected(new Set(allStocks.map((s) => s.ticker)))
+  const selectAll = () => setSelected(new Set(stocks.map((s) => s.ticker)))
   const selectNone = () => setSelected(new Set())
+
+  // ── Inline editing ──
+
+  const startEdit = useCallback((ticker: string, field: string, currentValue: string) => {
+    setEditingCell({ ticker, field })
+    setEditValue(currentValue === PENDING ? '' : currentValue)
+  }, [])
+
+  const cancelEdit = useCallback(() => {
+    setEditingCell(null)
+    setEditValue('')
+  }, [])
+
+  const saveEdit = useCallback(() => {
+    if (!editingCell) return
+
+    setStocks((prev) =>
+      prev.map((stock) => {
+        if (stock.ticker !== editingCell.ticker) return stock
+        return {
+          ...stock,
+          [editingCell.field]: editValue.trim() || PENDING,
+        }
+      })
+    )
+    setEditingCell(null)
+    setEditValue('')
+  }, [editingCell, editValue])
+
+  const handleEditKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        saveEdit()
+      } else if (e.key === 'Escape') {
+        cancelEdit()
+      }
+    },
+    [saveEdit, cancelEdit]
+  )
+
+  // ── Import with edited data ──
 
   const handleImport = async () => {
     if (selected.size === 0) {
@@ -102,16 +160,39 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
 
     setImporting(true)
     try {
+      // Build edited_stocks from current (possibly edited) state
+      const editedStocks: EditedStock[] = stocks
+        .filter((s) => selected.has(s.ticker))
+        .map((s) => ({
+          ticker: s.ticker,
+          name: s.name,
+          display_name: s.display_name,
+          action_signal: s.action_signal,
+          defense_price_display: s.defense_price_display,
+          min_target_display: s.min_target_display,
+          reasonable_target_display: s.reasonable_target_display,
+          strategy_display: s.strategy_display,
+          defense_price: s.defense_price,
+          min_target_low: s.min_target_low,
+          min_target_high: s.min_target_high,
+          reasonable_target_low: s.reasonable_target_low,
+          reasonable_target_high: s.reasonable_target_high,
+          entry_price: s.entry_price,
+          strategy_notes: s.strategy_display !== PENDING ? s.strategy_display : '',
+          action_type: s.action_type,
+        }))
+
       const resp = await importNotification(
         rawText,
         userId,
         Array.from(selected),
-        'dashboard'
+        'dashboard',
+        editedStocks
       )
 
       if (resp.success) {
         toast({
-          title: `匯入成功`,
+          title: '匯入成功',
           description: `已匯入 ${resp.imported_count} 檔股票`,
           status: 'success',
           duration: 4000,
@@ -130,7 +211,8 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
     }
   }
 
-  // Quick forward: send directly to pre-defined forward list
+  // ── Quick forward ──
+
   const handleQuickForward = async () => {
     if (selected.size === 0) {
       toast({ title: '請至少選擇一檔股票', status: 'warning', duration: 3000 })
@@ -139,18 +221,37 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
 
     setQuickForwarding(true)
     try {
-      const selectedStocks = allStocks.filter((s) => selected.has(s.ticker))
+      // Convert FormattedStockOutput to ParsedStock shape for forward API
+      const selectedStocks = stocks
+        .filter((s) => selected.has(s.ticker))
+        .map((s) => ({
+          ticker: s.ticker,
+          name: s.name,
+          defense_price: s.defense_price,
+          min_target_low: s.min_target_low,
+          min_target_high: s.min_target_high,
+          reasonable_target_low: s.reasonable_target_low,
+          reasonable_target_high: s.reasonable_target_high,
+          entry_price: s.entry_price,
+          strategy_notes: s.strategy_display !== PENDING ? s.strategy_display : '',
+          action_type: s.action_type,
+          display_name: s.display_name,
+          action_signal: s.action_signal,
+          defense_price_display: s.defense_price_display,
+          min_target_display: s.min_target_display,
+          reasonable_target_display: s.reasonable_target_display,
+          strategy_display: s.strategy_display,
+        }))
+
       const resp = await quickForwardStocks(userId, selectedStocks)
 
       if (resp.total_targets === 0) {
-        // No targets in quick list — prompt to set up
         toast({
           title: '尚未設定轉發清單',
           description: '請先點擊「編輯轉發清單」設定快速轉發目標',
           status: 'warning',
           duration: 4000,
         })
-        // Open modal in manage mode
         setForwardModalMode('manage')
         forwardModal.onOpen()
       } else if (resp.success) {
@@ -180,10 +281,92 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
     }
   }
 
-  // Open forward modal in manage mode
   const handleOpenManage = () => {
     setForwardModalMode('manage')
     forwardModal.onOpen()
+  }
+
+  // ── Render editable cell ──
+
+  const renderEditableField = (
+    stock: FormattedStockOutput,
+    fieldKey: keyof FormattedStockOutput,
+    label: string,
+    labelColor: string
+  ) => {
+    const value = stock[fieldKey] as string
+    const isPending = value === PENDING
+    const isEditing =
+      editingCell?.ticker === stock.ticker && editingCell?.field === fieldKey
+
+    if (isEditing) {
+      return (
+        <HStack spacing={1} w="100%">
+          <Text fontSize="xs" color={`${labelColor}.500`} fontWeight="bold" minW="56px">
+            {label}
+          </Text>
+          <Input
+            size="xs"
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onKeyDown={handleEditKeyDown}
+            autoFocus
+            placeholder={`輸入${label}`}
+            rounded="md"
+            flex={1}
+          />
+          <IconButton
+            aria-label="儲存"
+            icon={<CheckIcon />}
+            size="xs"
+            colorScheme="green"
+            variant="ghost"
+            onClick={saveEdit}
+          />
+          <IconButton
+            aria-label="取消"
+            icon={<CloseIcon />}
+            size="xs"
+            variant="ghost"
+            onClick={cancelEdit}
+          />
+        </HStack>
+      )
+    }
+
+    return (
+      <HStack
+        spacing={1}
+        cursor="pointer"
+        onClick={(e) => {
+          e.stopPropagation()
+          startEdit(stock.ticker, fieldKey, value)
+        }}
+        _hover={{ bg: 'blackAlpha.50' }}
+        rounded="md"
+        px={1}
+        py={0.5}
+        role="group"
+      >
+        <Text fontSize="xs" color={`${labelColor}.500`} fontWeight="bold" minW="56px">
+          {label}
+        </Text>
+        <Text
+          fontSize="sm"
+          fontWeight={isPending ? 'normal' : 'bold'}
+          color={isPending ? 'gray.400' : `${labelColor}.600`}
+          fontStyle={isPending ? 'italic' : 'normal'}
+        >
+          {value}
+        </Text>
+        <EditIcon
+          boxSize={3}
+          color="gray.300"
+          _groupHover={{ color: 'gray.500' }}
+          ml="auto"
+        />
+      </HStack>
+    )
   }
 
   return (
@@ -195,7 +378,7 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
             解析結果
           </Text>
           <Badge colorScheme="green" rounded="full" px={3}>
-            {allStocks.length} 檔股票
+            {stocks.length} 檔股票
           </Badge>
           {result.dates_found.length > 0 && (
             <Text fontSize="xs" color="ui.slate">
@@ -204,6 +387,11 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
           )}
         </HStack>
         <HStack spacing={2}>
+          <Tooltip label="點擊欄位值可直接編輯">
+            <Badge colorScheme="purple" variant="subtle" rounded="full" px={3}>
+              可編輯
+            </Badge>
+          </Tooltip>
           <Button size="xs" variant="ghost" onClick={selectAll} rounded="lg">
             全選
           </Button>
@@ -213,18 +401,11 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
         </HStack>
       </Flex>
 
-      {/* Stock list */}
+      {/* Stock list — fixed format */}
       <VStack spacing={3} align="stretch" mb={6}>
-        {allStocks.map((stock) => {
+        {stocks.map((stock) => {
           const isChecked = selected.has(stock.ticker)
-          // Per-stock action_type overrides parent message type for compound messages
-          // e.g., a stock with action_type="buy" inside a SELL_SIGNAL message → show 買進訊號
-          const effectiveType = stock.action_type === 'buy'
-            ? 'buy_signal'
-            : stock.action_type === 'sell'
-              ? 'sell_signal'
-              : stock.messageType
-          const typeConfig = MSG_TYPE_CONFIG[effectiveType] || MSG_TYPE_CONFIG.greeting
+          const signalColor = SIGNAL_COLOR[stock.action_signal] || 'gray'
 
           return (
             <Box
@@ -234,83 +415,41 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
               rounded="2xl"
               border="2px solid"
               borderColor={isChecked ? 'brand.500' : 'transparent'}
-              cursor="pointer"
-              onClick={() => toggleStock(stock.ticker)}
               transition="all 0.2s"
               _hover={{ shadow: 'md' }}
             >
               <Flex justify="space-between" align="start">
-                <HStack spacing={3} align="start">
+                <HStack spacing={3} align="start" flex={1}>
                   <Checkbox
                     isChecked={isChecked}
                     onChange={() => toggleStock(stock.ticker)}
                     colorScheme="blue"
                     mt={1}
-                    onClick={(e) => e.stopPropagation()}
                   />
-                  <VStack align="start" spacing={1}>
+                  <VStack align="start" spacing={2} flex={1}>
+                    {/* Row 1: Stock name + action signal */}
                     <HStack spacing={2}>
                       <Text fontWeight="extrabold" color="ui.navy">
-                        {stock.name}({stock.ticker})
+                        {stock.display_name}
                       </Text>
-                      <Tag size="sm" colorScheme={typeConfig.color} rounded="full">
-                        <TagLabel fontSize="xs">{typeConfig.label}</TagLabel>
+                      <Tag size="sm" colorScheme={signalColor} rounded="full">
+                        <TagLabel fontSize="xs">{stock.action_signal}</TagLabel>
                       </Tag>
                     </HStack>
 
-                    {/* Price targets summary */}
-                    <SimpleGrid columns={{ base: 1, md: 3 }} spacing={3}>
-                      {stock.defense_price && (
-                        <Tooltip label="跌破此價位需離場">
-                          <HStack>
-                            <Text fontSize="xs" color="red.500" fontWeight="bold">
-                              防守價
-                            </Text>
-                            <Text fontSize="sm" fontWeight="bold" color="red.600">
-                              {stock.defense_price} 元
-                            </Text>
-                          </HStack>
-                        </Tooltip>
-                      )}
-                      {stock.min_target_low && (
-                        <Tooltip label="最小預期漲幅區間">
-                          <HStack>
-                            <Text fontSize="xs" color="green.500" fontWeight="bold">
-                              最小漲幅
-                            </Text>
-                            <Text fontSize="sm" fontWeight="bold" color="green.600">
-                              {stock.min_target_low}~{stock.min_target_high} 元
-                            </Text>
-                          </HStack>
-                        </Tooltip>
-                      )}
-                      {stock.reasonable_target_low && (
-                        <Tooltip label="合理預期漲幅區間">
-                          <HStack>
-                            <Text fontSize="xs" color="orange.500" fontWeight="bold">
-                              合理漲幅
-                            </Text>
-                            <Text fontSize="sm" fontWeight="bold" color="orange.600">
-                              {stock.reasonable_target_low}~{stock.reasonable_target_high} 元
-                            </Text>
-                          </HStack>
-                        </Tooltip>
-                      )}
-                    </SimpleGrid>
-
-                    {/* Entry price */}
-                    {stock.entry_price && (
-                      <Text fontSize="xs" color="blue.600">
-                        建議買進價：{stock.entry_price} 元以下
-                      </Text>
-                    )}
-
-                    {/* Strategy notes */}
-                    {stock.strategy_notes && stock.strategy_notes !== '法人鎖碼股' && (
-                      <Text fontSize="xs" color="ui.slate" noOfLines={2}>
-                        {stock.strategy_notes}
-                      </Text>
-                    )}
+                    {/* Row 2+: Fixed fields — always shown, editable */}
+                    <VStack align="start" spacing={1} w="100%">
+                      {DISPLAY_FIELDS.map((field) => (
+                        <Box key={field.key} w="100%">
+                          {renderEditableField(
+                            stock,
+                            field.key,
+                            field.label,
+                            field.color
+                          )}
+                        </Box>
+                      ))}
+                    </VStack>
                   </VStack>
                 </HStack>
               </Flex>
@@ -324,7 +463,7 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
       {/* Action buttons */}
       <Flex justify="space-between" align="center" flexWrap="wrap" gap={2}>
         <Text fontSize="sm" color="ui.slate">
-          已選擇 {selected.size} / {allStocks.length} 檔
+          已選擇 {selected.size} / {stocks.length} 檔
         </Text>
         <HStack spacing={3} flexWrap="wrap">
           <Button
@@ -337,7 +476,7 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
             px={6}
             isDisabled={selected.size === 0}
           >
-            📨 轉發 ({selected.size})
+            轉發 ({selected.size})
           </Button>
           <Button
             variant="outline"
@@ -346,7 +485,7 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
             rounded="xl"
             px={6}
           >
-            📋 編輯轉發清單
+            編輯轉發清單
           </Button>
           <Button
             colorScheme="blue"
@@ -364,11 +503,30 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
         </HStack>
       </Flex>
 
-      {/* Forward Modal (supports both forward and manage modes) */}
+      {/* Forward Modal */}
       <StockForwardModal
         isOpen={forwardModal.isOpen}
         onClose={forwardModal.onClose}
-        stocks={allStocks.filter((s) => selected.has(s.ticker))}
+        stocks={stocks
+          .filter((s) => selected.has(s.ticker))
+          .map((s) => ({
+            ticker: s.ticker,
+            name: s.name,
+            defense_price: s.defense_price,
+            min_target_low: s.min_target_low,
+            min_target_high: s.min_target_high,
+            reasonable_target_low: s.reasonable_target_low,
+            reasonable_target_high: s.reasonable_target_high,
+            entry_price: s.entry_price,
+            strategy_notes: s.strategy_display !== PENDING ? s.strategy_display : '',
+            action_type: s.action_type,
+            display_name: s.display_name,
+            action_signal: s.action_signal,
+            defense_price_display: s.defense_price_display,
+            min_target_display: s.min_target_display,
+            reasonable_target_display: s.reasonable_target_display,
+            strategy_display: s.strategy_display,
+          }))}
         userId={userId}
         initialMode={forwardModalMode}
       />
