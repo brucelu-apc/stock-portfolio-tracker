@@ -173,17 +173,17 @@ async def _fetch_via_twstock(tickers: list[str]) -> dict[str, dict]:
                     info = stock.get('realtime', {})
 
                     latest_price = _parse_float(info.get('latest_trade_price'))
+                    # NOTE: Do NOT fallback to bid/ask midpoint!
+                    # Midpoint always differs from real price by half a tick
+                    # (e.g. ±0.025 / ±0.25 / ±2.5 depending on price range).
+                    # If no trade price is available, skip this ticker — the DB
+                    # retains the last valid price from Fugle WS or a prior poll.
                     if latest_price is None:
-                        bid = _parse_float(
-                            info.get('best_bid_price', ['0'])[0]
-                            if isinstance(info.get('best_bid_price'), list) else '0'
+                        logger.debug(
+                            "twstock %s: latest_trade_price='-', skipping "
+                            "(no bid/ask midpoint to avoid half-tick drift)",
+                            ticker,
                         )
-                        ask = _parse_float(
-                            info.get('best_ask_price', ['0'])[0]
-                            if isinstance(info.get('best_ask_price'), list) else '0'
-                        )
-                        if bid and ask:
-                            latest_price = (bid + ask) / 2
 
                     if latest_price and latest_price > 0:
                         results[ticker] = {
@@ -268,15 +268,13 @@ async def _fetch_via_twse_api(tickers: list[str]) -> dict[str, dict]:
                     v = item.get("v", "-")            # accumulated volume
 
                     latest_price = _parse_float(z)
+                    # NOTE: Do NOT fallback to bid/ask midpoint — same
+                    # half-tick drift issue as in twstock Tier 1.
                     if latest_price is None:
-                        # Try best bid/ask midpoint
-                        bids = item.get("b", "")  # bid prices (comma separated)
-                        asks = item.get("a", "")  # ask prices (comma separated)
-                        if bids and asks:
-                            bid = _parse_float(bids.split("_")[0])
-                            ask = _parse_float(asks.split("_")[0])
-                            if bid and ask:
-                                latest_price = (bid + ask) / 2
+                        logger.debug(
+                            "TWSE API %s: z='%s', skipping (no midpoint)",
+                            ticker_code, z,
+                        )
 
                     if latest_price and latest_price > 0:
                         results[ticker_code] = {

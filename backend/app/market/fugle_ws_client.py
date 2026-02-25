@@ -365,20 +365,11 @@ class FugleWSClient:
             if price is None and isinstance(data, dict):
                 price = data.get("closePrice") or data.get("lastPrice") or data.get("close")
 
-            if price is None:
-                # No price — try bid/ask midpoint as last resort
-                bid = None
-                ask = None
-                if isinstance(data, dict):
-                    bid = data.get("bid")
-                    ask = data.get("ask")
-                if bid is not None and ask is not None:
-                    try:
-                        bid_f, ask_f = float(bid), float(ask)
-                        if bid_f > 0 and ask_f > 0:
-                            price = (bid_f + ask_f) / 2
-                    except (ValueError, TypeError):
-                        pass
+            # NOTE: Do NOT fallback to bid/ask midpoint!
+            # The "trades" channel should provide actual trade prices.
+            # Midpoint of bid/ask always differs by half a tick
+            # (±0.025 / ±0.25 / ±2.5), causing price drift on the dashboard.
+            # If no trade price is available, skip this message entirely.
 
             if price is None or float(price) <= 0:
                 if self._message_count <= 20 and symbol:
