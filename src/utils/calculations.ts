@@ -125,12 +125,13 @@ export const aggregateHoldings = (holdings: Holding[], marketData: { [ticker: st
     const closeChange = prevClose !== 0 ? closePrice - prevClose : 0
     const closeChangePct = prevClose !== 0 ? ((closePrice - prevClose) / prevClose) * 100 : 0
 
-    // Realtime change: points & percentage (null when no realtime data)
-    const realtimeChange = (realtimePrice !== null && prevClose !== 0)
-      ? (realtimePrice - prevClose)
+    // Realtime change: points & percentage vs CLOSE price (昨收)
+    // 即時漲跌幅 = (即時價 - 昨收) / 昨收 — NOT prev_close (前天收盤)
+    const realtimeChange = (realtimePrice !== null && closePrice > 0)
+      ? (realtimePrice - closePrice)
       : null
-    const realtimeChangePct = (realtimePrice !== null && prevClose !== 0)
-      ? ((realtimePrice - prevClose) / prevClose) * 100
+    const realtimeChangePct = (realtimePrice !== null && closePrice > 0)
+      ? ((realtimePrice - closePrice) / closePrice) * 100
       : null
 
     const fxRate = latest.region === 'US' ? (marketData['USDTWD']?.current_price || 32.5) : 1
