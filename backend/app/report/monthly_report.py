@@ -34,9 +34,10 @@ TST = ZoneInfo("Asia/Taipei")
 
 # ─── Data Collection ────────────────────────────────────────
 
-async def collect_report_data(supabase) -> Optional[dict]:
+async def collect_report_data(supabase, user_id: str) -> Optional[dict]:
     """
-    Collect all data needed for the monthly report from Supabase.
+    Collect all data needed for the monthly report from Supabase,
+    scoped to a specific user's holdings.
 
     Returns a structured dict with:
       - month_label: "February 2026"
@@ -50,8 +51,13 @@ async def collect_report_data(supabase) -> Optional[dict]:
         now = datetime.now(TST)
         month_label = now.strftime("%B %Y")
 
-        # 1. Portfolio holdings + market data
-        holdings_res = supabase.table("portfolio_holdings").select("*").execute()
+        # 1. Portfolio holdings + market data — filtered to this user only
+        holdings_res = (
+            supabase.table("portfolio_holdings")
+            .select("*")
+            .eq("user_id", user_id)
+            .execute()
+        )
         market_res = supabase.table("market_data").select("*").execute()
 
         price_map = {
@@ -417,21 +423,12 @@ def build_report_telegram_html(data: dict) -> str:
 
 async def generate_and_send_report(supabase):
     """
-    Main entry point: collect data → send to all users via LINE + Telegram.
+    Main entry point: for each user, collect THEIR OWN data → send via LINE + Telegram.
 
     Called by APScheduler on the 1st of each month.
+    Each user receives a report based solely on their own portfolio holdings.
     """
-    logger.info("🚀 Generating monthly report...")
-
-    data = await collect_report_data(supabase)
-    if not data:
-        logger.error("Failed to collect report data — aborting")
-        return
-
-    logger.info(
-        f"Report data: value={data['total_value']:,.0f}, "
-        f"pnl={data['pnl']:+,.0f}, roi={data['roi']:+.2f}%"
-    )
+    logger.info("🚀 Generating monthly reports...")
 
     # Get all users with messaging configured
     try:
@@ -448,6 +445,22 @@ async def generate_and_send_report(supabase):
     sent_tg = 0
 
     for user in users_res.data:
+        user_id = user.get("user_id")
+        if not user_id:
+            logger.warning("Skipping user with missing user_id")
+            continue
+
+        # Collect report data scoped to this specific user's holdings
+        data = await collect_report_data(supabase, user_id=user_id)
+        if not data:
+            logger.error(f"Failed to collect report data for user {user_id} — skipping")
+            continue
+
+        logger.info(
+            f"User {user_id}: value={data['total_value']:,.0f}, "
+            f"pnl={data['pnl']:+,.0f}, roi={data['roi']:+.2f}%"
+        )
+
         prefs = user.get("notification_prefs") or {}
 
         # Send via Telegram (preferred — unlimited)
@@ -460,7 +473,7 @@ async def generate_and_send_report(supabase):
                 if ok:
                     sent_tg += 1
             except Exception as e:
-                logger.error(f"Report Telegram send error: {e}")
+                logger.error(f"Report Telegram send error for user {user_id}: {e}")
 
         # Send via LINE (only if enabled and quota allows)
         line_user_id = user.get("line_user_id")
@@ -477,7 +490,7 @@ async def generate_and_send_report(supabase):
                 if ok:
                     sent_line += 1
             except Exception as e:
-                logger.error(f"Report LINE send error: {e}")
+                logger.error(f"Report LINE send error for user {user_id}: {e}")
 
     logger.info(
         f"Monthly report sent — LINE: {sent_line}, Telegram: {sent_tg}"
@@ -486,12 +499,13 @@ async def generate_and_send_report(supabase):
 
 # ─── API Endpoint ───────────────────────────────────────────
 
-async def generate_report_preview(supabase) -> Optional[dict]:
+async def generate_report_preview(supabase, user_id: str) -> Optional[dict]:
     """
     Generate report data for API preview (no sending).
     Used by POST /api/report/generate endpoint.
+    Report is scoped to the specified user's own holdings.
     """
-    data = await collect_report_data(supabase)
+    data = await collect_report_data(supabase, user_id=user_id)
     if not data:
         return None
 

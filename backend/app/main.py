@@ -11,6 +11,7 @@ Handles:
 """
 import logging
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -189,12 +190,13 @@ async def manual_close_refresh(region: str = "all"):
 
 
 @app.post("/api/report/generate", tags=["Report"])
-async def generate_report(send: bool = False):
+async def generate_report(send: bool = False, user_id: Optional[str] = None):
     """
     Generate monthly investment report.
 
     - send=False (default): Preview only — returns report data + formatted messages
-    - send=True: Generate AND send to all users via LINE + Telegram
+      Requires user_id query param to scope the preview to a specific user.
+    - send=True: Generate AND send each user their own report via LINE + Telegram
     """
     from app.report.monthly_report import generate_report_preview, generate_and_send_report
     from supabase import create_client
@@ -205,7 +207,10 @@ async def generate_report(send: bool = False):
         await generate_and_send_report(sb)
         return {"success": True, "message": "Monthly report sent to all users"}
 
-    preview = await generate_report_preview(sb)
+    if not user_id:
+        return {"success": False, "error": "user_id is required for preview"}
+
+    preview = await generate_report_preview(sb, user_id=user_id)
     if preview:
         return {"success": True, **preview}
     return {"success": False, "error": "Failed to collect report data"}
