@@ -262,11 +262,26 @@ async def _startup_maintenance():
                         break
 
                 if needs_catchup:
-                    logger.info(
-                        "Startup: US close prices are stale — running catch-up "
-                        "daily_us_close now"
-                    )
-                    await daily_us_close()
+                    # IMPORTANT: Never run daily_us_close() while the US market
+                    # is open.  fetch_close_prices() uses yfinance's
+                    # regularMarketPrice, which returns the CURRENT INTRADAY
+                    # price during market hours — storing that as close_price
+                    # corrupts the base for 即時漲跌幅 calculations.
+                    # The correct close price will be fetched by the scheduled
+                    # daily_us_close job after market close (06:30 TST).
+                    if _is_us_market_open():
+                        logger.info(
+                            "Startup: US close prices are stale but market is "
+                            "OPEN — skipping catch-up to avoid storing intraday "
+                            "price as close_price. realtime_us_monitor will handle "
+                            "live prices."
+                        )
+                    else:
+                        logger.info(
+                            "Startup: US close prices are stale — running catch-up "
+                            "daily_us_close now"
+                        )
+                        await daily_us_close()
                 else:
                     logger.info("Startup: US close prices are fresh — no catch-up needed")
             else:
@@ -576,7 +591,19 @@ async def daily_us_close():
     Runs at 06:30 TST (≈ 17:30 / 18:30 ET depending on DST).
     Also clears ``realtime_price`` for all US tickers so the dashboard
     shows "休市" until the next trading session.
+
+    SAFETY GUARD: aborts if US market is currently open to prevent
+    yfinance's regularMarketPrice (intraday) from overwriting close_price.
     """
+    from app.market.finnhub_ws_client import _is_us_market_open
+    if _is_us_market_open():
+        logger.warning(
+            "daily_us_close: US market is currently OPEN — aborting to "
+            "prevent intraday price being stored as close_price. "
+            "This job should only run after market close."
+        )
+        return
+
     logger.info("=== daily_us_close job started ===")
     try:
         # Update exchange rate
