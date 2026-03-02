@@ -5,11 +5,12 @@ Stock Monitor — APScheduler-based orchestrator.
 Manages scheduled tasks and the QuoteManager (real-time WS feeds):
 
   Scheduled tasks (APScheduler):
-    1. alert_check:          Every 30s — reads market_data, checks alerts
-    2. realtime_tw_fallback: Every 30s — twstock polling (only when Fugle disabled)
-    3. daily_tw_close:       14:05 TST — yfinance Taiwan close
-    4. daily_us_close:       06:30 TST — yfinance US close + FX
-    5. monthly_report:       1st of month, 14:30 TST
+    1. alert_check:          Every 30s  — reads market_data, checks alerts
+    2. realtime_tw_fallback: Every 90s  — twstock polling (fallback when Fugle disabled)
+    3. daily_tw_close:       14:05 TST  — yfinance Taiwan close
+    4. daily_us_close:       06:30 TST  — yfinance US close + FX
+    5. realtime_us_fallback: Every 5min — yfinance/Finnhub REST US poll (fallback when Finnhub WS disabled)
+    6. monthly_report:       1st of month, 14:30 TST
 
   Real-time feeds (QuoteManager):
     Phase 1: Fugle WebSocket  (Taiwan stocks)
@@ -143,7 +144,22 @@ async def init_monitor(supabase_client):
         replace_existing=True,
     )
 
-    # Job 5: Monthly report (1st of each month, 14:30 TST)
+    # Job 5: US real-time polling fallback — mirrors realtime_tw_fallback for US stocks.
+    # Runs every 5 minutes; short-circuits outside US market hours (09:30–16:00 ET)
+    # and when Finnhub WS is healthy.  Ensures the dashboard shows live prices
+    # for US stocks even when FINNHUB_ENABLED=False.
+    scheduler.add_job(
+        realtime_us_monitor,
+        IntervalTrigger(seconds=300, timezone=TST),
+        id='realtime_us_fallback',
+        name='US Real-time Fallback (yfinance/Finnhub REST)',
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=120,
+    )
+    logger.info("US realtime polling registered (every 5 min, active only during US market hours)")
+
+    # Job 6: Monthly report (1st of each month, 14:30 TST)
     scheduler.add_job(
         monthly_report_job,
         CronTrigger(day=1, hour=14, minute=30, timezone=TST),
@@ -370,6 +386,43 @@ def _is_tw_ws_healthy(max_stale_seconds: float = 90.0) -> bool:
         return False
 
 
+def _is_us_ws_healthy(max_stale_seconds: float = 120.0) -> bool:
+    """
+    Check whether the Finnhub WebSocket is actively delivering US stock prices.
+
+    Returns True ONLY when:
+      1. QuoteManager is running with a Finnhub client
+      2. The connection is active
+      3. A trade message was received within *max_stale_seconds*
+
+    If False, realtime_us_monitor should run as a polling fallback.
+    """
+    if not _quote_manager:
+        return False
+    try:
+        health = _quote_manager.health()
+        if not health.get("running"):
+            return False
+        now = datetime.now(TST)
+        for src in health.get("sources", []):
+            if src.get("source") != "finnhub_ws":
+                continue
+            if not src.get("connected"):
+                continue
+            last_msg = src.get("last_message_at")
+            if last_msg:
+                if isinstance(last_msg, str):
+                    last_msg = datetime.fromisoformat(last_msg)
+                if last_msg.tzinfo is None:
+                    last_msg = last_msg.replace(tzinfo=TST)
+                if (now - last_msg).total_seconds() <= max_stale_seconds:
+                    return True
+        return False
+    except Exception as e:
+        logger.warning(f"US WS health check error: {e}")
+        return False
+
+
 async def realtime_tw_monitor():
     """
     Every 90 seconds during market hours:
@@ -447,6 +500,73 @@ async def daily_tw_close():
         logger.info(f"TW close update: {len(prices)} tickers")
     except Exception as e:
         logger.error(f"TW close update error: {e}", exc_info=True)
+
+
+async def realtime_us_monitor():
+    """
+    Every 5 minutes during US market hours (09:30–16:00 ET, weekdays):
+    Poll US stock prices via yfinance / Finnhub REST and write realtime_price.
+
+    This is the US equivalent of realtime_tw_monitor — a polling fallback
+    that ensures the dashboard shows live prices even when Finnhub WebSocket
+    is disabled (FINNHUB_ENABLED=False, the default).
+
+    Behaviour:
+      - **Finnhub WS healthy**: short-circuit — WS already handles realtime.
+      - **Finnhub WS down / disabled**: fetch all tracked US tickers via
+        yfinance (primary) → Finnhub REST (fallback), then write realtime_price.
+    """
+    from app.market.finnhub_ws_client import _is_us_market_open
+    if not _is_us_market_open():
+        return  # Skip outside US market hours
+
+    # If Finnhub WS is active and healthy, it already handles US realtime prices
+    if _is_us_ws_healthy():
+        logger.debug("US realtime: Finnhub WS healthy — skipping poll")
+        return
+
+    try:
+        us_tickers = await _get_tracked_tickers(region='US')
+        if not us_tickers:
+            return
+
+        logger.info(
+            "US realtime poll: fetching %d tickers via yfinance/Finnhub REST: %s",
+            len(us_tickers), us_tickers,
+        )
+
+        ticker_dicts = [{'ticker': t, 'region': 'US'} for t in us_tickers]
+        from app.market.yfinance_fetcher import fetch_close_prices
+        prices = await fetch_close_prices(ticker_dicts, _supabase)
+
+        if not prices:
+            logger.warning("US realtime poll: no prices returned (yfinance/Finnhub blocked?)")
+            return
+
+        now = datetime.now(TST)
+        for ticker, data in prices.items():
+            try:
+                _supabase.table("market_data").upsert(
+                    {
+                        "ticker": ticker,
+                        "region": "US",
+                        "current_price": data['current_price'],
+                        "realtime_price": data['current_price'],
+                        "update_source": "yfinance_realtime",
+                        "updated_at": now.isoformat(),
+                    },
+                    on_conflict='ticker',
+                ).execute()
+            except Exception as e:
+                logger.error(f"US realtime update failed for {ticker}: {e}")
+
+        current_prices = {t: p['current_price'] for t, p in prices.items()}
+        await _process_alerts(current_prices)
+
+        logger.info("US realtime: %d/%d tickers updated", len(prices), len(us_tickers))
+
+    except Exception as e:
+        logger.error(f"US realtime monitor error: {e}", exc_info=True)
 
 
 async def daily_us_close():
