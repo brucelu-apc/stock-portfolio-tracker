@@ -59,6 +59,14 @@ const SIGNAL_COLOR: Record<string, string> = {
   '法人鎖碼股': 'orange',
 }
 
+// All selectable signals for the inline picker
+const SIGNAL_OPTIONS: Array<{ label: string; color: string; actionType: string }> = [
+  { label: '買進建立', color: 'green',  actionType: 'buy' },
+  { label: '賣出',    color: 'red',    actionType: 'sell' },
+  { label: '續抱',    color: 'teal',   actionType: 'hold' },
+  { label: '法人鎖碼股', color: 'orange', actionType: 'institutional' },
+]
+
 // The 6 fixed display fields (key → label)
 const DISPLAY_FIELDS: Array<{
   key: keyof FormattedStockOutput
@@ -120,6 +128,18 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
   const cancelEdit = useCallback(() => {
     setEditingCell(null)
     setEditValue('')
+  }, [])
+
+  // Save a signal selection — updates both display label and backend action_type
+  const saveSignal = useCallback((ticker: string, label: string, actionType: string) => {
+    setStocks((prev) =>
+      prev.map((stock) =>
+        stock.ticker === ticker
+          ? { ...stock, action_signal: label, action_type: actionType }
+          : stock
+      )
+    )
+    setEditingCell(null)
   }, [])
 
   const saveEdit = useCallback(() => {
@@ -427,14 +447,66 @@ export const ParsePreview = ({ result, userId, rawText, onImportDone }: ParsePre
                     mt={1}
                   />
                   <VStack align="start" spacing={2} flex={1}>
-                    {/* Row 1: Stock name + action signal */}
-                    <HStack spacing={2}>
+                    {/* Row 1: Stock name + action signal (clickable to change) */}
+                    <HStack spacing={2} flexWrap="wrap">
                       <Text fontWeight="extrabold" color="ui.navy">
                         {stock.display_name}
                       </Text>
-                      <Tag size="sm" colorScheme={signalColor} rounded="full">
-                        <TagLabel fontSize="xs">{stock.action_signal}</TagLabel>
-                      </Tag>
+
+                      {editingCell?.ticker === stock.ticker &&
+                      editingCell?.field === 'action_signal' ? (
+                        /* ── Signal picker ── */
+                        <HStack spacing={1} flexWrap="wrap">
+                          {SIGNAL_OPTIONS.map((opt) => (
+                            <Tag
+                              key={opt.label}
+                              size="sm"
+                              colorScheme={opt.color}
+                              rounded="full"
+                              cursor="pointer"
+                              variant={
+                                stock.action_signal === opt.label ? 'solid' : 'outline'
+                              }
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                saveSignal(stock.ticker, opt.label, opt.actionType)
+                              }}
+                              _hover={{ opacity: 0.8, transform: 'scale(1.06)' }}
+                              transition="all 0.15s"
+                            >
+                              <TagLabel fontSize="xs">{opt.label}</TagLabel>
+                            </Tag>
+                          ))}
+                          <IconButton
+                            aria-label="取消"
+                            icon={<CloseIcon />}
+                            size="xs"
+                            variant="ghost"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              cancelEdit()
+                            }}
+                          />
+                        </HStack>
+                      ) : (
+                        /* ── Display badge (click to edit) ── */
+                        <Tooltip label="點擊修改操作訊號" placement="top" hasArrow fontSize="xs">
+                          <Tag
+                            size="sm"
+                            colorScheme={signalColor}
+                            rounded="full"
+                            cursor="pointer"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setEditingCell({ ticker: stock.ticker, field: 'action_signal' })
+                            }}
+                            _hover={{ opacity: 0.7 }}
+                            transition="opacity 0.15s"
+                          >
+                            <TagLabel fontSize="xs">{stock.action_signal}</TagLabel>
+                          </Tag>
+                        </Tooltip>
+                      )}
                     </HStack>
 
                     {/* Row 2+: Fixed fields — always shown, editable */}
