@@ -81,13 +81,15 @@ export const SellHoldingModal = ({ isOpen, onClose, onSuccess, holding, currentP
       return
     }
 
-    // Currently partial sell of aggregated holdings is complex, 
-    // we encourage full sell or selling individual items
-    if (isAggregated && sharesToSell < totalShares) {
-      toast({ 
-        title: '不支援彙整部分賣出', 
-        description: '多筆買入的股票請至「買入明細」中單筆結算，或執行全數出清。', 
-        status: 'warning' 
+    // Partial sell of truly multi-purchase aggregated holdings is complex;
+    // block only when items.length > 1. Single-purchase aggregated holdings
+    // (items.length === 1) can be partially sold just like a plain Holding.
+    const aggregatedItems = isAggregated ? (holding as AggregatedHolding).items : []
+    if (isAggregated && aggregatedItems.length > 1 && sharesToSell < totalShares) {
+      toast({
+        title: '不支援彙整部分賣出',
+        description: '多筆買入的股票請至「買入明細」中單筆結算，或執行全數出清。',
+        status: 'warning'
       })
       return
     }
@@ -126,8 +128,10 @@ export const SellHoldingModal = ({ isOpen, onClose, onSuccess, holding, currentP
         const { error: deleteError } = await query
         if (deleteError) throw deleteError
       } else {
-        // Single record partial sell
-        const h = holding as Holding
+        // Single record partial sell – works for plain Holding OR single-item AggregatedHolding
+        const h = isAggregated
+          ? (holding as AggregatedHolding).items[0]
+          : (holding as Holding)
         const { error: updateError } = await supabase
           .from('portfolio_holdings')
           .update({
