@@ -128,9 +128,9 @@ def classify_message(text: str) -> MessageType:
     # Check for sell signal — multiple indicators:
     #   1. Explicit "賣出/離場" + context keywords
     #   2. "走勢不如預期" alone (implies sell even without explicit 賣出)
-    #   3. "資金轉買" (compound sell→buy message)
+    #   3. "資金轉買" / "資金可買" (compound sell→buy message: sell X, use proceeds to buy Y)
     #   4. "獲利離場" / "可獲利離場" (take-profit exit advisory)
-    if "走勢不如預期" in text or "資金轉買" in text:
+    if "走勢不如預期" in text or "資金轉買" in text or "資金可買" in text:
         return MessageType.SELL_SIGNAL
     if RE_SELL_SIGNAL.search(text) and (
         "獲利了結" in text or "目標價到" in text
@@ -244,7 +244,7 @@ def _build_stock(
     stock goes through fill_display_fields() for consistent output.
     """
     # Clean common prefixes from stock names
-    clean_name = re.sub(r"^(?:資金轉買|轉買|新增)", "", name).strip()
+    clean_name = re.sub(r"^(?:資金轉買|資金可買|轉買|新增)", "", name).strip()
     if not clean_name:
         clean_name = name
 
@@ -371,7 +371,11 @@ def extract_sell_signal_stocks(text: str) -> list[ParsedStock]:
     stocks: list[ParsedStock] = []
 
     # Detect compound sell + buy message
-    buy_split_pos = text.find("資金轉買")
+    # Matches both "資金轉買" and "資金可買" (same semantic: sell X, proceed to buy Y)
+    for _split_kw in ("資金轉買", "資金可買"):
+        buy_split_pos = text.find(_split_kw)
+        if buy_split_pos >= 0:
+            break
     if buy_split_pos >= 0:
         sell_part = text[:buy_split_pos]
         buy_part = text[buy_split_pos:]

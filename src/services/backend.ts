@@ -139,17 +139,30 @@ export interface RegistrationNotifyRequest {
  * Parse notification text (preview only, no DB write).
  */
 export async function parseNotification(text: string, source = 'dashboard'): Promise<ParseResponse> {
-  const response = await fetch(`${BACKEND_URL}/api/parse`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, source }),
-  })
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 30_000) // 30-second timeout
 
-  if (!response.ok) {
-    throw new Error(`Parse failed: ${response.status} ${response.statusText}`)
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/parse`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, source }),
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      throw new Error(`Parse failed: ${response.status} ${response.statusText}`)
+    }
+
+    return response.json()
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      throw new Error('後端服務回應逾時（可能正在重啟），請稍後再試')
+    }
+    throw err
+  } finally {
+    clearTimeout(timeout)
   }
-
-  return response.json()
 }
 
 /**

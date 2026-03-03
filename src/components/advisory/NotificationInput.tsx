@@ -74,12 +74,20 @@ export const NotificationInput = ({ userId, onImportSuccess }: NotificationInput
       }
     } catch (err: any) {
       console.error('Parse error:', err)
-      setError(err.message || '解析失敗，請確認後端服務是否運行中。')
+      const isTimeout = err.message?.includes('逾時') || err.name === 'AbortError'
+      setError(
+        isTimeout
+          ? '後端服務回應逾時。Railway 服務可能正在冷啟動，通常 30~60 秒後即可正常使用，請稍後重試。'
+          : err.message || '解析失敗，請確認後端服務是否運行中。'
+      )
       toast({
-        title: '解析失敗',
-        description: '無法連接後端服務，請確認 Railway 服務狀態。',
-        status: 'error',
-        duration: 5000,
+        title: isTimeout ? '後端服務啟動中' : '解析失敗',
+        description: isTimeout
+          ? 'Railway 服務冷啟動需要約 30~60 秒，請稍後再點擊「解析通知」。'
+          : '無法連接後端服務，請確認 Railway 服務狀態。',
+        status: isTimeout ? 'warning' : 'error',
+        duration: 7000,
+        isClosable: true,
       })
     } finally {
       setLoading(false)
