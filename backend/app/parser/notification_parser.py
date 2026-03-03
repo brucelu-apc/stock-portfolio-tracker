@@ -66,8 +66,9 @@ RE_STOCK_WITH_NAME = re.compile(
 )
 
 # Defense price: "防守價53元" or "防守53" or "防守價設53元" or "可以53元為防守價"
+# Also handles "防守價可改以220元" (advisory phrase: defense price can be revised to N)
 RE_DEFENSE_PRICE = re.compile(
-    r"防守(?:價)?(?:設|可[以])?[為是]?\s*(\d+(?:\.\d+)?)\s*元?"
+    r"防守(?:價)?(?:設|可(?:改)?以)?[為是]?\s*(\d+(?:\.\d+)?)\s*元?"
     r"|(?:可[以])\s*(\d+(?:\.\d+)?)\s*元?為防守價"
 )
 
@@ -128,9 +129,13 @@ def classify_message(text: str) -> MessageType:
     #   1. Explicit "賣出/離場" + context keywords
     #   2. "走勢不如預期" alone (implies sell even without explicit 賣出)
     #   3. "資金轉買" (compound sell→buy message)
+    #   4. "獲利離場" / "可獲利離場" (take-profit exit advisory)
     if "走勢不如預期" in text or "資金轉買" in text:
         return MessageType.SELL_SIGNAL
-    if RE_SELL_SIGNAL.search(text) and ("獲利了結" in text or "目標價到" in text):
+    if RE_SELL_SIGNAL.search(text) and (
+        "獲利了結" in text or "目標價到" in text
+        or "獲利離場" in text or "獲利出場" in text
+    ):
         return MessageType.SELL_SIGNAL
 
     # Check for market analysis (大盤解析)
@@ -375,6 +380,9 @@ def extract_sell_signal_stocks(text: str) -> list[ParsedStock]:
         buy_part = ""
 
     # --- SELL stocks ---
+    # Determine if this is a profit-taking sell (has target price info worth keeping)
+    is_profit_taking = "獲利離場" in sell_part or "獲利出場" in sell_part or "獲利了結" in sell_part
+
     for m in re.finditer(
         r"([^\d\s,，。（(）)\n]{1,6})[（(](\d{4,6})[）)]", sell_part
     ):
@@ -384,11 +392,12 @@ def extract_sell_signal_stocks(text: str) -> list[ParsedStock]:
             stock = _build_stock(
                 ticker, name, sell_part,
                 action_type="sell",
-                skip_target_extraction=True,
+                # Keep target prices for profit-taking sells (the range where we exit)
+                skip_target_extraction=not is_profit_taking,
             )
-            # Extract sell reason
+            # Extract sell reason — prioritise specific phrases over generic "離場"
             sell_reason = re.search(
-                r"(走勢不如預期|獲利了結|目標價到|離場)", sell_part
+                r"(走勢不如預期|獲利了結|目標價到|獲利離場|獲利出場|離場)", sell_part
             )
             reason_text = (
                 f"賣出 — {sell_reason.group(1)}" if sell_reason else "賣出"
