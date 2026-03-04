@@ -239,6 +239,11 @@ class QuoteManager:
                     supabase_client=self._supabase,
                     finnhub_client=self._finnhub_client,
                 )
+                # Bug fix: start() was never called, so _watch_loop task never ran.
+                # Start with empty tickers; _handle_subscribe_us will populate them
+                # once DynamicSubscription completes its first scan.
+                await self._polygon_fallback.start([])
+                logger.info("Polygon fallback watcher started")
 
     # ── Phase 3: Shioaji ────────────────────────────────────────
 
@@ -283,8 +288,18 @@ class QuoteManager:
         """Called by DynamicSubscription when new US tickers appear."""
         if self._finnhub_client:
             self._finnhub_client.subscribe(tickers)
+        if self._polygon_fallback:
+            # Note: DynamicSubscription updates _current_us AFTER this callback,
+            # so get_us_tickers() still holds the previous set here.
+            # We manually union to get the true updated set.
+            current = self._subscription.get_us_tickers() if self._subscription else set()
+            self._polygon_fallback.update_tickers(list(current | set(tickers)))
 
     def _handle_unsubscribe_us(self, tickers: list[str]) -> None:
         """Called by DynamicSubscription when US tickers are removed."""
         if self._finnhub_client:
             self._finnhub_client.unsubscribe(tickers)
+        if self._polygon_fallback:
+            # Subtract removed tickers from the current set.
+            current = self._subscription.get_us_tickers() if self._subscription else set()
+            self._polygon_fallback.update_tickers(list(current - set(tickers)))
