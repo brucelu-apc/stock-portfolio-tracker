@@ -136,11 +136,72 @@ export interface RegistrationNotifyRequest {
 // ─── API calls ──────────────────────────────────────────────
 
 /**
- * Parse notification text (preview only, no DB write).
+ * Wake the Railway backend before making a request.
+ *
+ * Railway Hobby plan sleeps after ~30 min of inactivity.
+ * A cold start can take 30–90 s, which exceeds the old 30 s parse timeout.
+ * This helper polls /health until the service is up or the deadline passes.
+ *
+ * @param deadlineMs  Max total ms to wait (default 90 s)
+ * @returns true if backend came up, false if timed out
  */
-export async function parseNotification(text: string, source = 'dashboard'): Promise<ParseResponse> {
+export async function wakeBackend(deadlineMs = 90_000): Promise<boolean> {
+  const start = Date.now()
+  const POLL_INTERVAL = 3_000 // retry every 3 s
+
+  while (Date.now() - start < deadlineMs) {
+    try {
+      const res = await fetch(`${BACKEND_URL}/health`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(5_000), // each probe capped at 5 s
+      })
+      if (res.ok) return true
+    } catch {
+      // still sleeping — keep polling
+    }
+    await new Promise(r => setTimeout(r, POLL_INTERVAL))
+  }
+  return false
+}
+
+/**
+ * Parse notification text (preview only, no DB write).
+ *
+ * Handles Railway cold starts automatically:
+ *  1. Quick health probe — if the service is awake, skip to parse.
+ *  2. If sleeping, poll /health every 3 s (up to 90 s) and call onWakingUp()
+ *     so the UI can show a "waking up" indicator.
+ *  3. Once awake, fire the actual /api/parse request.
+ */
+export async function parseNotification(
+  text: string,
+  source = 'dashboard',
+  onWakingUp?: () => void,
+): Promise<ParseResponse> {
+  // Step 1: quick probe — is the backend already awake?
+  let isAwake = false
+  try {
+    const probe = await fetch(`${BACKEND_URL}/health`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(5_000),
+    })
+    isAwake = probe.ok
+  } catch {
+    // not awake yet
+  }
+
+  // Step 2: if sleeping, wake it first (up to 90 s)
+  if (!isAwake) {
+    onWakingUp?.()
+    isAwake = await wakeBackend(90_000)
+    if (!isAwake) {
+      throw new Error('WAKE_TIMEOUT')
+    }
+  }
+
+  // Step 3: fire the actual parse request (30 s is plenty once awake)
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 30_000) // 30-second timeout
+  const timeout = setTimeout(() => controller.abort(), 30_000)
 
   try {
     const response = await fetch(`${BACKEND_URL}/api/parse`, {

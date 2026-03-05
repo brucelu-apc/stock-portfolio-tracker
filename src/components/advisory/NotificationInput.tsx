@@ -34,6 +34,7 @@ interface NotificationInputProps {
 export const NotificationInput = ({ userId, onImportSuccess }: NotificationInputProps) => {
   const [text, setText] = useState('')
   const [loading, setLoading] = useState(false)
+  const [wakingUp, setWakingUp] = useState(false) // true while polling for Railway cold start
   const [parseResult, setParseResult] = useState<ParseResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const toast = useToast()
@@ -50,11 +51,30 @@ export const NotificationInput = ({ userId, onImportSuccess }: NotificationInput
     }
 
     setLoading(true)
+    setWakingUp(false)
     setError(null)
     setParseResult(null)
 
     try {
-      const result = await parseNotification(text.trim())
+      const result = await parseNotification(
+        text.trim(),
+        'dashboard',
+        () => {
+          // Backend is sleeping — switch to wake-up indicator
+          setWakingUp(true)
+          toast({
+            id: 'wake-toast',
+            title: '後端服務喚醒中…',
+            description: 'Railway 服務冷啟動約需 30~60 秒，系統會自動重試，請稍候。',
+            status: 'warning',
+            duration: 90_000,
+            isClosable: true,
+          })
+        },
+      )
+
+      toast.close('wake-toast')
+      setWakingUp(false)
       setParseResult(result)
 
       if (result.total_stocks === 0) {
@@ -74,18 +94,27 @@ export const NotificationInput = ({ userId, onImportSuccess }: NotificationInput
       }
     } catch (err: any) {
       console.error('Parse error:', err)
-      const isTimeout = err.message?.includes('逾時') || err.name === 'AbortError'
+      toast.close('wake-toast')
+      setWakingUp(false)
+
+      const isWakeTimeout = err.message === 'WAKE_TIMEOUT'
+      const isParseTimeout = err.message?.includes('逾時') || err.name === 'AbortError'
+
       setError(
-        isTimeout
-          ? '後端服務回應逾時。Railway 服務可能正在冷啟動，通常 30~60 秒後即可正常使用，請稍後重試。'
+        isWakeTimeout
+          ? '後端服務在 90 秒內未能喚醒，請至 Railway Dashboard 確認服務狀態後再重試。'
+          : isParseTimeout
+          ? '後端服務回應逾時，請稍後重試。'
           : err.message || '解析失敗，請確認後端服務是否運行中。'
       )
       toast({
-        title: isTimeout ? '後端服務啟動中' : '解析失敗',
-        description: isTimeout
-          ? 'Railway 服務冷啟動需要約 30~60 秒，請稍後再點擊「解析通知」。'
+        title: isWakeTimeout ? '服務喚醒失敗' : isParseTimeout ? '後端服務啟動中' : '解析失敗',
+        description: isWakeTimeout
+          ? '請至 Railway Dashboard 確認服務是否正常部署。'
+          : isParseTimeout
+          ? '服務冷啟動需要約 30~60 秒，請稍後再試。'
           : '無法連接後端服務，請確認 Railway 服務狀態。',
-        status: isTimeout ? 'warning' : 'error',
+        status: isWakeTimeout || isParseTimeout ? 'warning' : 'error',
         duration: 7000,
         isClosable: true,
       })
@@ -156,7 +185,7 @@ export const NotificationInput = ({ userId, onImportSuccess }: NotificationInput
             colorScheme="blue"
             onClick={handleParse}
             isLoading={loading}
-            loadingText="解析中..."
+            loadingText={wakingUp ? '服務喚醒中…' : '解析中…'}
             rounded="xl"
             px={8}
             bgGradient="linear(to-r, brand.500, brand.600)"
