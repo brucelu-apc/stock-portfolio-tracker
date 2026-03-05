@@ -138,9 +138,9 @@ export const Navbar = ({
               <Tooltip label="查看系統公告" placement="bottom">
                 <IconButton
                   aria-label="查看公告"
-                  icon={<BellIcon boxSize={8} />}
+                  icon={<BellIcon boxSize={6} />}
                   variant="ghost"
-                  size="lg"
+                  size="md"
                   color="orange.400"
                   onClick={onOpenAnnouncement}
                   _hover={{ bg: 'orange.50' }}

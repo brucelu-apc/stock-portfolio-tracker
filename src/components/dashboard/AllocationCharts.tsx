@@ -98,11 +98,16 @@ export const AllocationCharts = ({ data }: Props) => {
     symbolData.push({ name: '其他', value: othersValue })
   }
 
-  // ── Custom Tooltip ────────────────────────────────────────────
+  // Totals for percentage calculation (Recharts 3.x no longer injects percent into payload)
+  const regionTotal = regionData.reduce((s, i) => s + i.value, 0)
+  const sectorTotal = sectorData.reduce((s, i) => s + i.value, 0)
+  const symbolTotal = symbolData.reduce((s, i) => s + i.value, 0)
 
-  const CustomTooltip = ({ active, payload }: any) => {
+  // ── Tooltip factory — each chart gets its own total via closure ─
+
+  const makeTooltip = (total: number) => ({ active, payload }: any) => {
     if (active && payload && payload.length) {
-      const pct = ((payload[0].percent || 0) * 100).toFixed(1)
+      const pct = total > 0 ? ((payload[0].value / total) * 100).toFixed(1) : '0.0'
       return (
         <Box bg="white" p={3} rounded="xl" shadow="2xl" border="1px" borderColor="gray.100" minW="150px">
           <Text fontWeight="bold" color="ui.navy" mb={1} fontSize="sm">{payload[0].name}</Text>
@@ -253,7 +258,7 @@ export const AllocationCharts = ({ data }: Props) => {
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip content={<CustomTooltip />} />
+                  <Tooltip content={makeTooltip(regionTotal)} />
                 </PieChart>
               </ResponsiveContainer>
             </Box>
@@ -281,7 +286,7 @@ export const AllocationCharts = ({ data }: Props) => {
                       <Cell key={`cell-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip content={<CustomTooltip />} />
+                  <Tooltip content={makeTooltip(sectorTotal)} />
                 </PieChart>
               </ResponsiveContainer>
             </Box>
@@ -309,7 +314,7 @@ export const AllocationCharts = ({ data }: Props) => {
                       <Cell key={`cell-${index}`} fill={COLORS[(index + 4) % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip content={<CustomTooltip />} />
+                  <Tooltip content={makeTooltip(symbolTotal)} />
                 </PieChart>
               </ResponsiveContainer>
             </Box>
