@@ -142,6 +142,14 @@ def classify_message(text: str) -> MessageType:
     if "大盤解析" in text:
         return MessageType.MARKET_ANALYSIS
 
+    # Check for inverse-ETF / hedge message (避險反向ETF)
+    # These messages use reversed format: （00632R）元大台灣50反1
+    # The R-suffix ticker is the tell — normal tickers are pure digits.
+    if ("避險" in text or "反向" in text) and re.search(
+        r'[（(]\d{4,6}[A-Za-z][）)]', text
+    ):
+        return MessageType.BUY_SIGNAL
+
     # Check for buy signal
     if RE_BUY_SIGNAL.search(text) and ("新朋友" in text or "空手" in text):
         return MessageType.BUY_SIGNAL
@@ -360,6 +368,47 @@ def extract_buy_signal_stocks(text: str) -> list[ParsedStock]:
     return stocks
 
 
+def extract_hedge_stocks(text: str) -> list[ParsedStock]:
+    """
+    Extract inverse ETF / hedge stocks from messages like:
+      "（00632R）元大台灣50反1，（00664R）國泰臺灣加權反1，..."
+
+    These use **reversed** format: （ticker）name (code first, name second),
+    and the ticker may have a letter suffix (e.g., 00632R for inverse ETFs).
+
+    Called as a fallback when the message classifies as BUY_SIGNAL but
+    extract_buy_signal_stocks() finds nothing (because the normal 名稱（代號）
+    format isn't present).
+    """
+    stocks: list[ParsedStock] = []
+    seen: set[str] = set()
+
+    # Matches （00632R）元大台灣50反1 — ticker may have optional letter suffix,
+    # name allows digits (e.g. "50反1") so we only exclude whitespace/punctuation.
+    RE_HEDGE = re.compile(
+        r'[（(](\d{4,6}[A-Za-z]?)[）)]\s*([^\s,，。（(）)【】]{2,20})'
+    )
+
+    for m in RE_HEDGE.finditer(text):
+        ticker = m.group(1)
+        name = m.group(2).strip()
+
+        if ticker in seen or "防守" in name:
+            continue
+        seen.add(ticker)
+
+        stock = _build_stock(
+            ticker, name, text,
+            action_type="buy",
+            skip_target_extraction=True,
+        )
+        stock.strategy_notes = "避險反向ETF"
+        stock.strategy_display = "避險反向ETF"
+        stocks.append(stock)
+
+    return stocks
+
+
 def extract_sell_signal_stocks(text: str) -> list[ParsedStock]:
     """
     Extract stocks from sell signal messages.
@@ -564,6 +613,10 @@ def parse_notification(text: str) -> ParseResponse:
 
             elif msg_type == MessageType.BUY_SIGNAL:
                 stocks = extract_buy_signal_stocks(part)
+                if not stocks:
+                    # Fallback: try reversed-format inverse ETF extraction
+                    # e.g. "（00632R）元大台灣50反1" (code before name)
+                    stocks = extract_hedge_stocks(part)
                 parsed_msg.stocks = stocks
                 for s in stocks:
                     all_tickers.add(s.ticker)
