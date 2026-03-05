@@ -29,11 +29,32 @@ from app.monitor.stock_monitor import (
     get_monitor_status,
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+# Configure logging — timestamps in Asia/Taipei (UTC+8) so Railway logs
+# match the developer's local time instead of the Railway server's UTC.
+class _TaipeiFormatter(logging.Formatter):
+    """Custom formatter that renders %(asctime)s in Asia/Taipei timezone."""
+    _tz = None
+
+    @classmethod
+    def _get_tz(cls):
+        if cls._tz is None:
+            from zoneinfo import ZoneInfo
+            cls._tz = ZoneInfo("Asia/Taipei")
+        return cls._tz
+
+    def formatTime(self, record, datefmt=None):
+        from datetime import datetime
+        dt = datetime.fromtimestamp(record.created, tz=self._get_tz())
+        if datefmt:
+            return dt.strftime(datefmt)
+        return dt.strftime("%Y-%m-%d %H:%M:%S") + f",{record.msecs:03.0f}"
+
+
+_handler = logging.StreamHandler()
+_handler.setFormatter(_TaipeiFormatter(
+    fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+))
+logging.basicConfig(level=logging.INFO, handlers=[_handler])
 logger = logging.getLogger(__name__)
 
 # Reduce APScheduler noise — only show warnings (suppress per-job SUCCESS logs)
@@ -121,6 +142,76 @@ async def manual_price_refresh():
         return {"success": True, "message": "Realtime price refresh triggered"}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+@app.post("/api/prices/realtime-refresh", tags=["Monitor"])
+async def manual_us_realtime_refresh():
+    """
+    Manually trigger the US real-time price poll (Finnhub REST → yfinance).
+
+    Bypasses the market-hours gate so prices can be fetched on-demand
+    even outside normal scheduler runs.  Useful for debugging 休市 issues.
+
+    Returns diagnostic info: which tickers were fetched and from what source.
+    """
+    from app.monitor.stock_monitor import _get_tracked_tickers, _supabase
+    from app.market.finnhub_ws_client import _is_us_market_open
+    from app.market.yfinance_fetcher import _fetch_via_finnhub_rest, _fetch_via_yfinance
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    TST = ZoneInfo("Asia/Taipei")
+    results: dict = {
+        "market_open": _is_us_market_open(),
+        "tickers": [],
+        "prices": {},
+        "source": {},
+    }
+
+    try:
+        us_tickers = await _get_tracked_tickers(region='US')
+        results["tickers"] = us_tickers
+
+        if not us_tickers:
+            return {"success": False, "message": "No US tickers tracked", "results": results}
+
+        # Try Finnhub REST first (reliable on Railway)
+        prices = await _fetch_via_finnhub_rest(us_tickers)
+        for t in prices:
+            results["source"][t] = "finnhub_rest"
+
+        # yfinance fallback for any missed
+        missing = [t for t in us_tickers if t not in prices]
+        if missing:
+            yf = await _fetch_via_yfinance(missing, region='US', existing_sectors={})
+            prices.update(yf)
+            for t in yf:
+                results["source"][t] = "yfinance"
+
+        results["prices"] = {t: round(d['current_price'], 2) for t, d in prices.items()}
+
+        now = datetime.now(TST)
+        for ticker, data in prices.items():
+            _supabase.table("market_data").upsert(
+                {
+                    "ticker": ticker,
+                    "region": "US",
+                    "current_price": data['current_price'],
+                    "realtime_price": data['current_price'],
+                    "update_source": "manual_realtime",
+                    "updated_at": now.isoformat(),
+                },
+                on_conflict='ticker',
+            ).execute()
+
+        return {
+            "success": True,
+            "message": f"Updated {len(prices)}/{len(us_tickers)} US tickers",
+            "results": results,
+        }
+    except Exception as e:
+        logger.error(f"Manual US realtime refresh error: {e}", exc_info=True)
+        return {"success": False, "error": str(e), "results": results}
 
 
 @app.post("/api/prices/close-refresh", tags=["Monitor"])

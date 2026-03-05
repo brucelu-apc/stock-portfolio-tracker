@@ -520,16 +520,23 @@ async def daily_tw_close():
 async def realtime_us_monitor():
     """
     Every 5 minutes during US market hours (09:30–16:00 ET, weekdays):
-    Poll US stock prices via yfinance / Finnhub REST and write realtime_price.
+    Poll US stock prices and write realtime_price.
 
     This is the US equivalent of realtime_tw_monitor — a polling fallback
     that ensures the dashboard shows live prices even when Finnhub WebSocket
-    is disabled (FINNHUB_ENABLED=False, the default).
+    is disabled or experiencing intermittent 502 errors on Railway.
+
+    Source priority (Railway-optimised — yfinance is blocked on cloud IPs):
+      1. Finnhub REST API (/quote endpoint) — always reliable on Railway.
+      2. yfinance — fallback for any tickers Finnhub REST missed.
+
+    Note: yfinance is intentionally tried LAST.  On cloud servers it often
+    returns stale history data (previous close) without raising an exception,
+    which would suppress the Finnhub REST call if yfinance were tried first.
 
     Behaviour:
       - **Finnhub WS healthy**: short-circuit — WS already handles realtime.
-      - **Finnhub WS down / disabled**: fetch all tracked US tickers via
-        yfinance (primary) → Finnhub REST (fallback), then write realtime_price.
+      - **Finnhub WS down / disabled**: run the two-step poll above.
     """
     from app.market.finnhub_ws_client import _is_us_market_open
     if not _is_us_market_open():
@@ -546,16 +553,35 @@ async def realtime_us_monitor():
             return
 
         logger.info(
-            "US realtime poll: fetching %d tickers via yfinance/Finnhub REST: %s",
+            "US realtime poll: fetching %d tickers (Finnhub REST → yfinance): %s",
             len(us_tickers), us_tickers,
         )
 
-        ticker_dicts = [{'ticker': t, 'region': 'US'} for t in us_tickers]
-        from app.market.yfinance_fetcher import fetch_close_prices
-        prices = await fetch_close_prices(ticker_dicts, _supabase)
+        from app.market.yfinance_fetcher import (
+            _fetch_via_finnhub_rest,
+            _fetch_via_yfinance,
+        )
+
+        # ── Step 1: Finnhub REST (primary on Railway) ──────────────
+        prices = await _fetch_via_finnhub_rest(us_tickers)
+
+        # ── Step 2: yfinance for any tickers Finnhub REST missed ───
+        missing = [t for t in us_tickers if t not in prices]
+        if missing:
+            logger.info(
+                "US realtime: Finnhub REST missed %d tickers, trying yfinance: %s",
+                len(missing), missing,
+            )
+            yf_prices = await _fetch_via_yfinance(
+                missing, region='US', existing_sectors={}
+            )
+            prices.update(yf_prices)
 
         if not prices:
-            logger.warning("US realtime poll: no prices returned (yfinance/Finnhub blocked?)")
+            logger.warning(
+                "US realtime poll: no prices returned "
+                "(Finnhub REST + yfinance both failed — check FINNHUB_API_KEY)"
+            )
             return
 
         now = datetime.now(TST)
@@ -567,7 +593,7 @@ async def realtime_us_monitor():
                         "region": "US",
                         "current_price": data['current_price'],
                         "realtime_price": data['current_price'],
-                        "update_source": "yfinance_realtime",
+                        "update_source": "finnhub_rest_realtime",
                         "updated_at": now.isoformat(),
                     },
                     on_conflict='ticker',
