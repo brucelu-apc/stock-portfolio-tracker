@@ -159,41 +159,47 @@ export const AllocationCharts = ({ data }: Props) => {
     colorOffset?: number
   }) => {
     const total = chartData.reduce((s, i) => s + i.value, 0)
-    const shown = chartData.slice(0, 5)
-    const rest = chartData.length - shown.length
 
     return (
-      <VStack spacing={1.5} align="stretch" mt={4} pt={3} borderTop="1px solid" borderColor="gray.100">
-        {shown.map((item, index) => (
-          <Flex key={item.name} justify="space-between" align="center">
-            <HStack spacing={2} minW={0} flex={1}>
-              <Box
-                w={2.5} h={2.5} rounded="full" flexShrink={0}
-                bg={COLORS[(index + colorOffset) % COLORS.length]}
-              />
-              <Text
-                fontSize="xs" color="ui.navy" fontWeight="medium"
-                isTruncated maxW="120px" title={item.name}
-              >
-                {item.name}
-              </Text>
-            </HStack>
-            <HStack spacing={2} flexShrink={0}>
-              <Text fontSize="xs" color="ui.slate" fontWeight="medium">
-                {((item.value / total) * 100).toFixed(1)}%
-              </Text>
-              <Badge fontSize="10px" colorScheme="blue" variant="subtle" px={1.5}>
-                {formatCompact(item.value)}
-              </Badge>
-            </HStack>
-          </Flex>
-        ))}
-        {rest > 0 && (
-          <Text fontSize="10px" color="ui.slate" textAlign="right" fontStyle="italic">
-            +{rest} 個項目
-          </Text>
-        )}
-      </VStack>
+      <Box
+        mt={4} pt={3}
+        borderTop="1px solid" borderColor="gray.100"
+        maxH="130px"
+        overflowY="auto"
+        sx={{
+          '&::-webkit-scrollbar': { width: '4px' },
+          '&::-webkit-scrollbar-track': { background: 'transparent' },
+          '&::-webkit-scrollbar-thumb': { background: '#CBD5E0', borderRadius: '2px' },
+          '&::-webkit-scrollbar-thumb:hover': { background: '#A0AEC0' },
+        }}
+      >
+        <VStack spacing={1.5} align="stretch" pr={1}>
+          {chartData.map((item, index) => (
+            <Flex key={item.name} justify="space-between" align="center">
+              <HStack spacing={2} minW={0} flex={1}>
+                <Box
+                  w={2.5} h={2.5} rounded="full" flexShrink={0}
+                  bg={COLORS[(index + colorOffset) % COLORS.length]}
+                />
+                <Text
+                  fontSize="xs" color="ui.navy" fontWeight="medium"
+                  isTruncated maxW="120px" title={item.name}
+                >
+                  {item.name}
+                </Text>
+              </HStack>
+              <HStack spacing={2} flexShrink={0}>
+                <Text fontSize="xs" color="ui.slate" fontWeight="medium">
+                  {((item.value / total) * 100).toFixed(1)}%
+                </Text>
+                <Badge fontSize="10px" colorScheme="blue" variant="subtle" px={1.5}>
+                  {formatCompact(item.value)}
+                </Badge>
+              </HStack>
+            </Flex>
+          ))}
+        </VStack>
+      </Box>
     )
   }
 

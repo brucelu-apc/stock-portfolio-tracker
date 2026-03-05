@@ -151,73 +151,45 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
           {group.region === 'US' ? '$' : ''}{group.avgCost.toFixed(2)}
         </Td>
 
-        {/* 即時股價 (Realtime Price) */}
-        <Td isNumeric fontWeight="bold" color={getRealtimePriceColor()}>
-          <HStack justify="flex-end" spacing={0}>
-            {hasRealtimePrice && realtimePriceUp && <TriangleUpIcon mr={1} />}
-            {hasRealtimePrice && realtimePriceDown && <TriangleDownIcon mr={1} />}
-            <Text>
-              {hasRealtimePrice
-                ? `${group.region === 'US' ? '$' : ''}${group.realtimePrice!.toFixed(2)}`
-                : '休市'}
-            </Text>
-          </HStack>
-        </Td>
-
-        {/* 即時漲跌幅 (Realtime Change: points + %) — stacked vertically */}
+        {/* 即時行情: price + change/pct merged into one cell */}
         <Td isNumeric>
-          {hasRealtimePrice && group.realtimeChange !== null && group.realtimeChangePct !== null ? (
-            <VStack
-              align="end"
-              spacing={0}
-              color={realtimePriceUp ? 'red.500' : realtimePriceDown ? 'green.500' : 'black'}
-            >
-              <HStack spacing={1} justify="flex-end">
-                {realtimePriceUp && <TriangleUpIcon boxSize={2.5} />}
-                {realtimePriceDown && <TriangleDownIcon boxSize={2.5} />}
-                <Text fontWeight="bold" fontSize="sm">
-                  {formatChange(group.realtimeChange, group.region === 'US')}
-                </Text>
-              </HStack>
-              <Text fontSize="xs">
-                {group.realtimeChangePct > 0 ? '+' : ''}{group.realtimeChangePct.toFixed(2)}%
+          <VStack align="end" spacing={0} color={getRealtimePriceColor()}>
+            <HStack spacing={1} justify="flex-end">
+              {hasRealtimePrice && realtimePriceUp && <TriangleUpIcon boxSize={3} />}
+              {hasRealtimePrice && realtimePriceDown && <TriangleDownIcon boxSize={3} />}
+              <Text fontWeight="bold" fontSize="sm">
+                {hasRealtimePrice
+                  ? `${group.region === 'US' ? '$' : ''}${group.realtimePrice!.toFixed(2)}`
+                  : '休市'}
               </Text>
-            </VStack>
-          ) : (
-            <Text color="gray.400">-</Text>
-          )}
+            </HStack>
+            {hasRealtimePrice && group.realtimeChange !== null && group.realtimeChangePct !== null && (
+              <Text fontSize="xs">
+                {formatChange(group.realtimeChange, group.region === 'US')}&nbsp;
+                ({group.realtimeChangePct > 0 ? '+' : ''}{group.realtimeChangePct.toFixed(2)}%)
+              </Text>
+            )}
+          </VStack>
         </Td>
 
-        {/* 最新收盤價 (Close Price) */}
-        <Td isNumeric fontWeight="bold" color={getClosePriceColor()}>
-          <HStack justify="flex-end" spacing={0}>
-            {hasCloseData && getCloseSymbol()}
-            <Text>
-              {hasCloseData ? `${group.region === 'US' ? '$' : ''}${group.closePrice.toFixed(2)}` : '-'}
-            </Text>
-          </HStack>
-        </Td>
-
-        {/* 收盤漲跌幅 (Close Change: points + %) — stacked vertically */}
+        {/* 收盤行情: close price + change/pct merged into one cell */}
         <Td isNumeric>
-          {hasCloseData ? (
-            <VStack
-              align="end"
-              spacing={0}
-              color={isCloseUp ? 'red.500' : isCloseDown ? 'green.500' : 'black'}
-            >
-              <HStack spacing={1} justify="flex-end">
-                {isCloseUp && <TriangleUpIcon boxSize={2.5} />}
-                {isCloseDown && <TriangleDownIcon boxSize={2.5} />}
-                <Text fontWeight="bold" fontSize="sm">
-                  {formatChange(group.closeChange, group.region === 'US')}
-                </Text>
-              </HStack>
-              <Text fontSize="xs">
-                {group.closeChangePct > 0 ? '+' : ''}{group.closeChangePct.toFixed(2)}%
+          <VStack align="end" spacing={0} color={getClosePriceColor()}>
+            <HStack spacing={1} justify="flex-end">
+              {hasCloseData && getCloseSymbol()}
+              <Text fontWeight="bold" fontSize="sm">
+                {hasCloseData
+                  ? `${group.region === 'US' ? '$' : ''}${group.closePrice.toFixed(2)}`
+                  : '-'}
               </Text>
-            </VStack>
-          ) : '-'}
+            </HStack>
+            {hasCloseData && (
+              <Text fontSize="xs">
+                {formatChange(group.closeChange, group.region === 'US')}&nbsp;
+                ({group.closeChangePct > 0 ? '+' : ''}{group.closeChangePct.toFixed(2)}%)
+              </Text>
+            )}
+          </VStack>
         </Td>
 
         <Td isNumeric fontWeight="semibold">
@@ -249,7 +221,7 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
             </VStack>
           </Tooltip>
         </Td>
-        <Td isNumeric>
+        <Td isNumeric display={{ base: 'none', xl: 'table-cell' }}>
           <VStack align="end" spacing={0} fontSize="xs">
             <Text color="red.500">利: {tp.toFixed(1)}</Text>
             <Text color="green.500" fontWeight="bold">損: {sl.toFixed(1)}</Text>
@@ -278,7 +250,7 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
 
       {group.isMultiple && (
         <Tr>
-          <Td colSpan={12} p={0} borderBottom={isOpen ? '1px solid' : 'none'} borderColor="gray.100">
+          <Td colSpan={10} p={0} borderBottom={isOpen ? '1px solid' : 'none'} borderColor="gray.100">
             <Collapse in={isOpen}>
               <Box p={4} bg="gray.50" fontSize="sm">
                 <Text fontWeight="bold" mb={2} color="gray.600">買入明細</Text>
@@ -461,7 +433,7 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
 
   const PRESET_SIZES = [10, 20, 100]
   const isCustomSize = !PRESET_SIZES.includes(pageSize)
-  const COL_COUNT = 12
+  const COL_COUNT = 10    // 12 → 10: merged realtime price+change & close price+change into 2 columns
 
   return (
     <>
@@ -471,15 +443,13 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
             <Tr>
               <SortableTh field="ticker">代碼/地區</SortableTh>
               <SortableTh field="name">名稱</SortableTh>
-              <SortableTh field="totalShares" isNumeric>總股數</SortableTh>
-              <SortableTh field="avgCost" isNumeric>加權均價</SortableTh>
-              <SortableTh field="realtimePrice" isNumeric>即時股價</SortableTh>
-              <SortableTh field="realtimeChangePct" isNumeric>即時漲跌幅</SortableTh>
-              <SortableTh field="closePrice" isNumeric>最新收盤價</SortableTh>
-              <SortableTh field="closeChangePct" isNumeric>收盤漲跌幅</SortableTh>
-              <SortableTh field="marketValue" isNumeric>市值 (TWD)</SortableTh>
-              <SortableTh field="unrealizedPnl" isNumeric>總損益</SortableTh>
-              <Th isNumeric>停利/損</Th>
+              <SortableTh field="totalShares" isNumeric>股數</SortableTh>
+              <SortableTh field="avgCost" isNumeric>均價</SortableTh>
+              <SortableTh field="realtimePrice" isNumeric>即時行情</SortableTh>
+              <SortableTh field="closePrice" isNumeric>收盤行情</SortableTh>
+              <SortableTh field="marketValue" isNumeric>市值</SortableTh>
+              <SortableTh field="unrealizedPnl" isNumeric>損益</SortableTh>
+              <Th isNumeric display={{ base: 'none', xl: 'table-cell' }}>停利/損</Th>
               <Th>操作</Th>
             </Tr>
           </Thead>
