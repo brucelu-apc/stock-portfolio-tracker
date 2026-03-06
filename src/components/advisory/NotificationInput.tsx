@@ -162,7 +162,7 @@ export const NotificationInput = ({ userId, onImportSuccess }: NotificationInput
         <Textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder={`貼上 LINE 投顧通知文字...\n\n範例：\n楊少凱贏家2\n億光（2393）目標價補充：\n技術面：低檔有主力進場的跡象...\n最小漲幅68~69.5元附近，合理漲幅75~77元附近。\n操作策略：手中持股部位目前可以53元為防守價...`}
+          placeholder={`貼上 LINE 投顧通知文字...\n\n範例：\n億光（2393）目標價補充：\n技術面：低檔有主力進場的跡象...\n最小漲幅68~69.5元附近，合理漲幅75~77元附近。\n操作策略：手中持股部位目前可以53元為防守價...`}
           minH="200px"
           maxH="400px"
           resize="vertical"
