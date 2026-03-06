@@ -2,13 +2,16 @@
  * AdvisoryTable — Displays advisory-tracked stocks with defense/target prices.
  *
  * Shows:
+ *  - Checkbox for multi-select delete
  *  - Stock ticker/name with message type badge
  *  - Current price (live via Realtime) with change indicator
  *  - Defense price + distance % (red when close)
  *  - Min target range + distance %
  *  - Reasonable target range
  *  - Entry price
+ *  - 導入日期 (effective_date from price_targets)
  *  - Tracking status (watching/entered/exited/ignored)
+ *  - Delete action (single row)
  *  - Link indicator if stock is also in portfolio_holdings
  *
  * Data sources:
@@ -41,8 +44,19 @@ import {
   MenuItem,
   Tag,
   TagLabel,
+  Checkbox,
+  Button,
+  IconButton,
+  AlertDialog,
+  AlertDialogBody,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogContent,
+  AlertDialogOverlay,
+  useDisclosure,
 } from '@chakra-ui/react'
-import { TriangleUpIcon, TriangleDownIcon, CheckIcon } from '@chakra-ui/icons'
+import { TriangleUpIcon, TriangleDownIcon, CheckIcon, DeleteIcon } from '@chakra-ui/icons'
+import { useRef } from 'react'
 import { supabase } from '../../services/supabase'
 import { useRealtimeSubscription } from '../../hooks/useRealtimeSubscription'
 
@@ -111,6 +125,21 @@ function targetDistColor(pct: number): string {
   return 'ui.slate'                    // Far from target
 }
 
+/** Format effective_date to a compact zh-TW string, e.g. 2025/3/15 */
+function formatDate(dateStr: string): string {
+  if (!dateStr) return '—'
+  try {
+    const d = new Date(dateStr)
+    return d.toLocaleDateString('zh-TW', {
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+    })
+  } catch {
+    return dateStr
+  }
+}
+
 // ─── Component ──────────────────────────────────────────────
 
 interface AdvisoryTableProps {
@@ -125,6 +154,13 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
   const [marketPrices, setMarketPrices] = useState<Record<string, MarketPrice>>({})
   const [isLoading, setIsLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState<string>('all')
+
+  // ── Multi-select delete state ──
+  const [selectedTickers, setSelectedTickers] = useState<Set<string>>(new Set())
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [pendingDeleteTickers, setPendingDeleteTickers] = useState<string[]>([])
+  const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure()
+  const cancelRef = useRef<HTMLButtonElement>(null)
 
   // Set of tickers held in portfolio
   const heldTickers = useMemo(
@@ -245,6 +281,81 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
     }
   }
 
+  // ── Delete targets ──
+
+  const confirmDelete = (tickers: string[]) => {
+    setPendingDeleteTickers(tickers)
+    onConfirmOpen()
+  }
+
+  const executeDelete = async () => {
+    const tickers = pendingDeleteTickers
+    if (tickers.length === 0) return
+    onConfirmClose()
+    setIsDeleting(true)
+
+    try {
+      // Delete from both price_targets (all records) and advisory_tracking
+      const [targetsRes, trackingRes] = await Promise.all([
+        supabase.from('price_targets').delete().in('ticker', tickers),
+        supabase.from('advisory_tracking').delete().in('ticker', tickers).eq('user_id', userId),
+      ])
+
+      if (targetsRes.error || trackingRes.error) {
+        toast({
+          title: '刪除失敗',
+          description: targetsRes.error?.message || trackingRes.error?.message,
+          status: 'error',
+          duration: 3000,
+        })
+      } else {
+        // Update local state — remove deleted tickers immediately
+        setPriceTargets((prev) => prev.filter((t) => !tickers.includes(t.ticker)))
+        setTrackingMap((prev) => {
+          const updated = { ...prev }
+          tickers.forEach((t) => delete updated[t])
+          return updated
+        })
+        setSelectedTickers(new Set())
+        toast({
+          title: `已刪除 ${tickers.length} 檔標的`,
+          status: 'success',
+          duration: 2500,
+        })
+      }
+    } catch (err) {
+      console.error('Delete error:', err)
+      toast({ title: '刪除失敗', status: 'error', duration: 3000 })
+    } finally {
+      setIsDeleting(false)
+      setPendingDeleteTickers([])
+    }
+  }
+
+  // ── Checkbox selection helpers ──
+
+  const toggleSelectTicker = (ticker: string) => {
+    setSelectedTickers((prev) => {
+      const next = new Set(prev)
+      if (next.has(ticker)) {
+        next.delete(ticker)
+      } else {
+        next.add(ticker)
+      }
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    const allTickers = filteredTargets.map((t) => t.ticker)
+    const allSelected = allTickers.every((t) => selectedTickers.has(t))
+    if (allSelected) {
+      setSelectedTickers(new Set())
+    } else {
+      setSelectedTickers(new Set(allTickers))
+    }
+  }
+
   // ── Filtered & sorted data ──
 
   const filteredTargets = useMemo(() => {
@@ -254,6 +365,14 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
       return status === statusFilter
     })
   }, [priceTargets, trackingMap, statusFilter])
+
+  // Selection state derived values
+  const allSelected = filteredTargets.length > 0 && filteredTargets.every((t) => selectedTickers.has(t.ticker))
+  const someSelected = filteredTargets.some((t) => selectedTickers.has(t.ticker))
+  const selectedCount = filteredTargets.filter((t) => selectedTickers.has(t.ticker)).length
+
+  // Total columns: ✓ + 股票 + 現價 + 防守價 + 距防守% + 最小漲幅 + 距目標% + 合理漲幅 + 建議買進 + 導入日期 + 狀態 + 操作 = 12
+  const COL_COUNT = 12
 
   // ── Render ──
 
@@ -269,13 +388,30 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
             即時監控防守價與目標價距離
           </Text>
         </VStack>
-        <HStack spacing={3} w={{ base: 'full', md: 'auto' }}>
+        <HStack spacing={3} w={{ base: 'full', md: 'auto' }} flexWrap="wrap">
+          {/* Bulk delete button — only visible when rows are selected */}
+          {selectedCount > 0 && (
+            <Button
+              size="sm"
+              colorScheme="red"
+              variant="outline"
+              leftIcon={<DeleteIcon />}
+              rounded="xl"
+              isLoading={isDeleting}
+              onClick={() => confirmDelete(filteredTargets.filter((t) => selectedTickers.has(t.ticker)).map((t) => t.ticker))}
+            >
+              刪除選取 ({selectedCount})
+            </Button>
+          )}
           <Select
             size="sm"
             rounded="xl"
             w={{ base: 'full', md: '140px' }}
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
+            onChange={(e) => {
+              setStatusFilter(e.target.value)
+              setSelectedTickers(new Set()) // clear selection on filter change
+            }}
           >
             <option value="all">全部狀態</option>
             <option value="watching">觀察中</option>
@@ -294,6 +430,16 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
         <Table variant="simple" size="sm">
           <Thead bg="gray.50">
             <Tr>
+              {/* Select-all checkbox */}
+              <Th w="40px" px={2}>
+                <Checkbox
+                  isChecked={allSelected}
+                  isIndeterminate={someSelected && !allSelected}
+                  onChange={toggleSelectAll}
+                  isDisabled={filteredTargets.length === 0}
+                  colorScheme="blue"
+                />
+              </Th>
               <Th>股票</Th>
               <Th isNumeric>現價</Th>
               <Th isNumeric>防守價</Th>
@@ -302,21 +448,23 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
               <Th isNumeric>距目標%</Th>
               <Th isNumeric>合理漲幅</Th>
               <Th isNumeric>建議買進</Th>
+              <Th>導入日期</Th>
               <Th>狀態</Th>
+              <Th w="50px" px={2}>操作</Th>
             </Tr>
           </Thead>
           <Tbody>
             {isLoading ? (
               [...Array(5)].map((_, i) => (
                 <Tr key={i}>
-                  {[...Array(9)].map((_, j) => (
+                  {[...Array(COL_COUNT)].map((_, j) => (
                     <Td key={j}><Skeleton h="18px" /></Td>
                   ))}
                 </Tr>
               ))
             ) : filteredTargets.length === 0 ? (
               <Tr>
-                <Td colSpan={9} textAlign="center" py={10} color="ui.slate">
+                <Td colSpan={COL_COUNT} textAlign="center" py={10} color="ui.slate">
                   尚未匯入投顧追蹤標的。請先在上方貼上通知文字並匯入。
                 </Td>
               </Tr>
@@ -326,6 +474,7 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
                 const currentPrice = price?.current_price || 0
                 const prevClose = price?.prev_close || currentPrice
                 const hasPriceData = currentPrice > 0
+                const isSelected = selectedTickers.has(target.ticker)
 
                 // Price change indicators
                 const priceChange = hasPriceData ? currentPrice - prevClose : 0
@@ -356,8 +505,19 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
                   <Tr
                     key={target.id}
                     _hover={{ bg: 'gray.50' }}
+                    bg={isSelected ? 'blue.50' : undefined}
                     opacity={status === 'ignored' || status === 'exited' ? 0.5 : 1}
+                    transition="background 0.15s"
                   >
+                    {/* Row checkbox */}
+                    <Td px={2}>
+                      <Checkbox
+                        isChecked={isSelected}
+                        onChange={() => toggleSelectTicker(target.ticker)}
+                        colorScheme="blue"
+                      />
+                    </Td>
+
                     {/* Ticker + Name */}
                     <Td>
                       <HStack spacing={2}>
@@ -469,6 +629,13 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
                       )}
                     </Td>
 
+                    {/* 導入日期 (effective_date) */}
+                    <Td>
+                      <Text fontSize="xs" color="ui.slate" whiteSpace="nowrap">
+                        {formatDate(target.effective_date)}
+                      </Text>
+                    </Td>
+
                     {/* Tracking Status */}
                     <Td>
                       <Menu>
@@ -493,6 +660,22 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
                         </MenuList>
                       </Menu>
                     </Td>
+
+                    {/* Delete action */}
+                    <Td px={2}>
+                      <Tooltip label={`刪除 ${target.ticker}`} placement="left">
+                        <IconButton
+                          aria-label={`刪除 ${target.ticker}`}
+                          icon={<DeleteIcon />}
+                          size="xs"
+                          variant="ghost"
+                          colorScheme="red"
+                          rounded="full"
+                          isLoading={isDeleting && pendingDeleteTickers.includes(target.ticker)}
+                          onClick={() => confirmDelete([target.ticker])}
+                        />
+                      </Tooltip>
+                    </Td>
                   </Tr>
                 )
               })
@@ -500,6 +683,40 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
           </Tbody>
         </Table>
       </TableContainer>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog
+        isOpen={isConfirmOpen}
+        leastDestructiveRef={cancelRef}
+        onClose={onConfirmClose}
+        isCentered
+      >
+        <AlertDialogOverlay>
+          <AlertDialogContent rounded="2xl">
+            <AlertDialogHeader fontSize="lg" fontWeight="bold" color="ui.navy">
+              確認刪除
+            </AlertDialogHeader>
+            <AlertDialogBody>
+              {pendingDeleteTickers.length === 1 ? (
+                <>確定要刪除 <Text as="span" fontWeight="bold">{pendingDeleteTickers[0]}</Text> 的追蹤資料嗎？</>
+              ) : (
+                <>確定要刪除 <Text as="span" fontWeight="bold">{pendingDeleteTickers.length} 檔</Text> 標的的追蹤資料嗎？</>
+              )}
+              <Text fontSize="sm" color="red.500" mt={2}>
+                此操作將一併刪除價格目標與追蹤狀態，且無法復原。
+              </Text>
+            </AlertDialogBody>
+            <AlertDialogFooter gap={2}>
+              <Button ref={cancelRef} onClick={onConfirmClose} rounded="xl" size="sm">
+                取消
+              </Button>
+              <Button colorScheme="red" onClick={executeDelete} rounded="xl" size="sm" isLoading={isDeleting}>
+                確認刪除
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialogOverlay>
+      </AlertDialog>
     </Box>
   )
 }

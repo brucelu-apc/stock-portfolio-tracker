@@ -13,6 +13,7 @@
  *  - Acknowledge (mark as read) button per alert
  *  - Dismiss all read alerts
  *  - Animated entrance via framer-motion
+ *  - Stock name displayed alongside ticker (fetched from price_targets)
  */
 import { useState, useEffect, useCallback } from 'react'
 import {
@@ -69,6 +70,26 @@ export const AlertPanel = ({ userId: _userId, maxAlerts = 20 }: AlertPanelProps)
   const toast = useToast()
   const [alerts, setAlerts] = useState<PriceAlert[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  // Map of ticker → stock name, fetched from price_targets
+  const [tickerNameMap, setTickerNameMap] = useState<Record<string, string>>({})
+
+  // ── Fetch stock names for a list of tickers ──
+
+  const fetchTickerNames = useCallback(async (tickers: string[]) => {
+    if (tickers.length === 0) return
+    const { data } = await supabase
+      .from('price_targets')
+      .select('ticker, stock_name')
+      .in('ticker', tickers)
+      .eq('is_latest', true)
+    if (data) {
+      const nameMap: Record<string, string> = {}
+      data.forEach((n: any) => {
+        if (n.stock_name) nameMap[n.ticker] = n.stock_name
+      })
+      setTickerNameMap((prev) => ({ ...prev, ...nameMap }))
+    }
+  }, [])
 
   // ── Fetch initial alerts ──
 
@@ -85,13 +106,16 @@ export const AlertPanel = ({ userId: _userId, maxAlerts = 20 }: AlertPanelProps)
         console.error('Failed to fetch alerts:', error)
       } else {
         setAlerts(data || [])
+        // Batch-fetch stock names for all alert tickers
+        const tickers = [...new Set((data || []).map((a: PriceAlert) => a.ticker))]
+        await fetchTickerNames(tickers)
       }
     } catch (err) {
       console.error('Alerts fetch error:', err)
     } finally {
       setIsLoading(false)
     }
-  }, [maxAlerts])
+  }, [maxAlerts, fetchTickerNames])
 
   useEffect(() => {
     fetchAlerts()
@@ -106,6 +130,14 @@ export const AlertPanel = ({ userId: _userId, maxAlerts = 20 }: AlertPanelProps)
         // Prepend new alert, keep within maxAlerts limit
         const updated = [newAlert, ...prev].slice(0, maxAlerts)
         return updated
+      })
+
+      // Fetch name for the new ticker if we don't have it yet
+      setTickerNameMap((prev) => {
+        if (!prev[newAlert.ticker]) {
+          fetchTickerNames([newAlert.ticker])
+        }
+        return prev
       })
 
       // Show toast for new alert
@@ -213,6 +245,7 @@ export const AlertPanel = ({ userId: _userId, maxAlerts = 20 }: AlertPanelProps)
             alerts.map((alert) => {
               const config = ALERT_TYPE_CONFIG[alert.alert_type] || ALERT_TYPE_CONFIG.defense_breach
               const isDanger = alert.alert_type === 'defense_breach' || alert.alert_type === 'sl_triggered'
+              const stockName = tickerNameMap[alert.ticker]
 
               return (
                 <MotionBox
@@ -250,11 +283,23 @@ export const AlertPanel = ({ userId: _userId, maxAlerts = 20 }: AlertPanelProps)
 
                         {/* Alert details */}
                         <VStack align="start" spacing={0} flex={1}>
-                          <HStack spacing={2}>
-                            <Text fontWeight="extrabold" color="ui.navy" fontSize="sm">
-                              {alert.ticker}
-                            </Text>
-                            <Text fontSize="xs" color="ui.slate">
+                          <HStack spacing={2} flexWrap="wrap">
+                            {/* Show name + ticker when name is available, else just ticker */}
+                            {stockName ? (
+                              <>
+                                <Text fontWeight="extrabold" color="ui.navy" fontSize="sm">
+                                  {stockName}
+                                </Text>
+                                <Text fontWeight="semibold" color="ui.slate" fontSize="xs">
+                                  {alert.ticker}
+                                </Text>
+                              </>
+                            ) : (
+                              <Text fontWeight="extrabold" color="ui.navy" fontSize="sm">
+                                {alert.ticker}
+                              </Text>
+                            )}
+                            <Text fontSize="xs" color="gray.400">
                               {formatTime(alert.triggered_at)}
                             </Text>
                           </HStack>
