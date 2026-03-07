@@ -28,7 +28,6 @@ import {
   Tr,
   Th,
   Td,
-  TableContainer,
   Badge,
   Text,
   HStack,
@@ -54,8 +53,18 @@ import {
   AlertDialogContent,
   AlertDialogOverlay,
   useDisclosure,
+  Input,
 } from '@chakra-ui/react'
-import { TriangleUpIcon, TriangleDownIcon, CheckIcon, DeleteIcon } from '@chakra-ui/icons'
+import {
+  TriangleUpIcon,
+  TriangleDownIcon,
+  CheckIcon,
+  DeleteIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  ArrowLeftIcon,
+  ArrowRightIcon,
+} from '@chakra-ui/icons'
 import { useRef } from 'react'
 import { supabase } from '../../services/supabase'
 import { useRealtimeSubscription } from '../../hooks/useRealtimeSubscription'
@@ -100,6 +109,9 @@ const TRACKING_STATUS_CONFIG: Record<string, { label: string; color: string }> =
   exited: { label: '已出場', color: 'gray' },
   ignored: { label: '略過', color: 'gray' },
 }
+
+const PRESET_PAGE_SIZES = [10, 20, 50]
+const DEFAULT_PAGE_SIZE = 20
 
 // ─── Helpers ────────────────────────────────────────────────
 
@@ -154,6 +166,12 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
   const [marketPrices, setMarketPrices] = useState<Record<string, MarketPrice>>({})
   const [isLoading, setIsLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState<string>('all')
+
+  // ── Pagination state ──
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE)
+  const [currentPageNum, setCurrentPageNum] = useState<number>(1)
+  const [customPageSize, setCustomPageSize] = useState<string>('')
+  const [showCustomInput, setShowCustomInput] = useState(false)
 
   // ── Multi-select delete state ──
   const [selectedTickers, setSelectedTickers] = useState<Set<string>>(new Set())
@@ -347,7 +365,7 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
   }
 
   const toggleSelectAll = () => {
-    const allTickers = filteredTargets.map((t) => t.ticker)
+    const allTickers = paginatedTargets.map((t) => t.ticker)
     const allSelected = allTickers.every((t) => selectedTickers.has(t))
     if (allSelected) {
       setSelectedTickers(new Set())
@@ -366,9 +384,53 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
     })
   }, [priceTargets, trackingMap, statusFilter])
 
+  // ── Pagination computed values ──
+
+  const totalItems = filteredTargets.length
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize))
+
+  // Clamp current page to valid range
+  const safePage = Math.min(currentPageNum, totalPages)
+
+  const paginatedTargets = useMemo(() => {
+    const start = (safePage - 1) * pageSize
+    return filteredTargets.slice(start, start + pageSize)
+  }, [filteredTargets, safePage, pageSize])
+
+  // ── Pagination handlers ──
+
+  const handlePageSizeChange = (value: string) => {
+    if (value === 'custom') {
+      setShowCustomInput(true)
+      return
+    }
+    setShowCustomInput(false)
+    const size = parseInt(value, 10)
+    if (!isNaN(size) && size > 0) {
+      setPageSize(size)
+      setCurrentPageNum(1)
+    }
+  }
+
+  const handleCustomPageSizeSubmit = () => {
+    const size = parseInt(customPageSize, 10)
+    if (!isNaN(size) && size >= 5 && size <= 200) {
+      setPageSize(size)
+      setCurrentPageNum(1)
+      setShowCustomInput(false)
+    } else {
+      toast({
+        title: '請輸入 5-200 之間的數字',
+        status: 'warning',
+        duration: 2000,
+      })
+    }
+  }
+
   // Selection state derived values
-  const allSelected = filteredTargets.length > 0 && filteredTargets.every((t) => selectedTickers.has(t.ticker))
-  const someSelected = filteredTargets.some((t) => selectedTickers.has(t.ticker))
+  const isCustomSize = !PRESET_PAGE_SIZES.includes(pageSize)
+  const allSelected = paginatedTargets.length > 0 && paginatedTargets.every((t) => selectedTickers.has(t.ticker))
+  const someSelected = paginatedTargets.some((t) => selectedTickers.has(t.ticker))
   const selectedCount = filteredTargets.filter((t) => selectedTickers.has(t.ticker)).length
 
   // Total columns: ✓ + 股票 + 現價 + 防守價 + 距防守% + 最小漲幅 + 距目標% + 合理漲幅 + 建議買進 + 導入日期 + 狀態 + 操作 = 12
@@ -410,7 +472,8 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
             value={statusFilter}
             onChange={(e) => {
               setStatusFilter(e.target.value)
-              setSelectedTickers(new Set()) // clear selection on filter change
+              setSelectedTickers(new Set())
+              setCurrentPageNum(1)  // reset to first page on filter change
             }}
           >
             <option value="all">全部狀態</option>
@@ -425,10 +488,10 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
         </HStack>
       </Flex>
 
-      {/* Table */}
-      <TableContainer>
+      {/* Table with vertical scroll */}
+      <Box overflowX="auto" overflowY="auto" maxH="600px">
         <Table variant="simple" size="sm">
-          <Thead bg="gray.50">
+          <Thead bg="gray.50" position="sticky" top={0} zIndex={1}>
             <Tr>
               {/* Select-all checkbox */}
               <Th w="40px" px={2}>
@@ -436,7 +499,7 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
                   isChecked={allSelected}
                   isIndeterminate={someSelected && !allSelected}
                   onChange={toggleSelectAll}
-                  isDisabled={filteredTargets.length === 0}
+                  isDisabled={paginatedTargets.length === 0}
                   colorScheme="blue"
                 />
               </Th>
@@ -462,14 +525,16 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
                   ))}
                 </Tr>
               ))
-            ) : filteredTargets.length === 0 ? (
+            ) : paginatedTargets.length === 0 ? (
               <Tr>
                 <Td colSpan={COL_COUNT} textAlign="center" py={10} color="ui.slate">
-                  尚未匯入投顧追蹤標的。請先在上方貼上通知文字並匯入。
+                  {totalItems === 0
+                    ? '尚未匯入投顧追蹤標的。請先在上方貼上通知文字並匯入。'
+                    : '此頁無資料。'}
                 </Td>
               </Tr>
             ) : (
-              filteredTargets.map((target) => {
+              paginatedTargets.map((target) => {
                 const price = marketPrices[target.ticker]
                 const currentPrice = price?.current_price || 0
                 const prevClose = price?.prev_close || currentPrice
@@ -682,7 +747,110 @@ export const AdvisoryTable = ({ userId, holdings = [] }: AdvisoryTableProps) => 
             )}
           </Tbody>
         </Table>
-      </TableContainer>
+      </Box>
+
+      {/* ── Pagination Controls ── */}
+      {!isLoading && totalItems > 0 && (
+        <Flex
+          justify="space-between"
+          align="center"
+          px={1}
+          pt={4}
+          mt={2}
+          borderTop="1px"
+          borderColor="gray.100"
+          flexWrap="wrap"
+          gap={2}
+        >
+          {/* Left: page size selector */}
+          <HStack spacing={2}>
+            <Text fontSize="sm" color="gray.600" whiteSpace="nowrap">每頁顯示:</Text>
+            <Select
+              size="sm"
+              w="auto"
+              value={(showCustomInput || isCustomSize) ? 'custom' : String(pageSize)}
+              onChange={(e) => handlePageSizeChange(e.target.value)}
+              rounded="md"
+            >
+              <option value="10">10</option>
+              <option value="20">20</option>
+              <option value="50">50</option>
+              <option value="custom">{isCustomSize && !showCustomInput ? `自訂 (${pageSize})` : '自訂'}</option>
+            </Select>
+            {showCustomInput && (
+              <HStack spacing={1}>
+                <Input
+                  size="sm"
+                  w="70px"
+                  type="number"
+                  min={5}
+                  max={200}
+                  placeholder="5-200"
+                  value={customPageSize}
+                  onChange={(e) => setCustomPageSize(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleCustomPageSizeSubmit()}
+                  rounded="md"
+                />
+                <Button size="sm" onClick={handleCustomPageSizeSubmit} colorScheme="blue" variant="outline" rounded="md">
+                  確定
+                </Button>
+              </HStack>
+            )}
+            <Text fontSize="sm" color="gray.500">
+              共 {totalItems} 筆
+            </Text>
+          </HStack>
+
+          {/* Right: page navigation */}
+          {totalPages > 1 && (
+            <HStack spacing={1}>
+              <Tooltip label="第一頁">
+                <IconButton
+                  aria-label="First page"
+                  icon={<ArrowLeftIcon boxSize={3} />}
+                  size="sm"
+                  variant="ghost"
+                  isDisabled={safePage <= 1}
+                  onClick={() => setCurrentPageNum(1)}
+                />
+              </Tooltip>
+              <Tooltip label="上一頁">
+                <IconButton
+                  aria-label="Previous page"
+                  icon={<ChevronLeftIcon />}
+                  size="sm"
+                  variant="ghost"
+                  isDisabled={safePage <= 1}
+                  onClick={() => setCurrentPageNum(safePage - 1)}
+                />
+              </Tooltip>
+              <Text fontSize="sm" color="gray.700" px={2} whiteSpace="nowrap">
+                {safePage} / {totalPages}
+              </Text>
+              <Tooltip label="下一頁">
+                <IconButton
+                  aria-label="Next page"
+                  icon={<ChevronRightIcon />}
+                  size="sm"
+                  variant="ghost"
+                  isDisabled={safePage >= totalPages}
+                  onClick={() => setCurrentPageNum(safePage + 1)}
+                />
+              </Tooltip>
+              <Tooltip label="最後一頁">
+                <IconButton
+                  aria-label="Last page"
+                  icon={<ArrowRightIcon boxSize={3} />}
+                  size="sm"
+                  variant="ghost"
+                  isDisabled={safePage >= totalPages}
+                  onClick={() => setCurrentPageNum(totalPages)}
+                />
+              </Tooltip>
+            </HStack>
+          )}
+        </Flex>
+      )}
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog
