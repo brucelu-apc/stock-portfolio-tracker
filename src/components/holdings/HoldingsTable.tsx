@@ -129,8 +129,15 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
 
   return (
     <>
-      <Tr cursor="pointer" onClick={onToggle} _hover={{ bg: 'gray.50' }}>
-        <Td>
+      <Tr cursor="pointer" onClick={onToggle} _hover={{ bg: 'gray.50' }} role="group">
+        <Td
+          position="sticky"
+          left={0}
+          zIndex={1}
+          bg="white"
+          _groupHover={{ bg: 'gray.50' }}
+          boxShadow="2px 0 5px rgba(0,0,0,0.06)"
+        >
           <HStack spacing={2}>
             <VStack align="start" spacing={0}>
               <Text fontWeight="bold">{group.ticker}</Text>
@@ -221,7 +228,7 @@ const HoldingRow = ({ group, marketData, onEdit, onDelete }: HoldingRowProps) =>
             </VStack>
           </Tooltip>
         </Td>
-        <Td isNumeric display={{ base: 'none', xl: 'table-cell' }}>
+        <Td isNumeric>
           <VStack align="end" spacing={0} fontSize="xs">
             <Text color="red.500">利: {tp.toFixed(1)}</Text>
             <Text color="green.500" fontWeight="bold">損: {sl.toFixed(1)}</Text>
@@ -387,13 +394,20 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
       : <ChevronDownIcon ml={1} color="blue.500" />
   }
 
-  const SortableTh = ({ field, children, isNumeric = false }: { field: SortField, children: React.ReactNode, isNumeric?: boolean }) => (
+  const SortableTh = ({ field, children, isNumeric = false, sticky = false }: { field: SortField, children: React.ReactNode, isNumeric?: boolean, sticky?: boolean }) => (
     <Th
       cursor="pointer"
       onClick={() => requestSort(field)}
       _hover={{ bg: 'gray.100' }}
       isNumeric={isNumeric}
       whiteSpace="nowrap"
+      {...(sticky && {
+        position: 'sticky',
+        left: 0,
+        zIndex: 2,
+        bg: 'gray.50',
+        boxShadow: '2px 0 5px rgba(0,0,0,0.06)',
+      })}
     >
       <HStack spacing={1} justify={isNumeric ? 'flex-end' : 'flex-start'}>
         <Text>{children}</Text>
@@ -441,7 +455,7 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
         <Table variant="simple" size="sm">
           <Thead bg="gray.50">
             <Tr>
-              <SortableTh field="ticker">代碼/地區</SortableTh>
+              <SortableTh field="ticker" sticky>代碼/地區</SortableTh>
               <SortableTh field="name">名稱</SortableTh>
               <SortableTh field="totalShares" isNumeric>股數</SortableTh>
               <SortableTh field="avgCost" isNumeric>均價</SortableTh>
@@ -449,7 +463,7 @@ export const HoldingsTable = ({ holdings, marketData, onDataChange, isLoading }:
               <SortableTh field="closePrice" isNumeric>收盤行情</SortableTh>
               <SortableTh field="marketValue" isNumeric>市值</SortableTh>
               <SortableTh field="unrealizedPnl" isNumeric>損益</SortableTh>
-              <Th isNumeric display={{ base: 'none', xl: 'table-cell' }}>停利/損</Th>
+              <Th isNumeric>停利/損</Th>
               <Th>操作</Th>
             </Tr>
           </Thead>
