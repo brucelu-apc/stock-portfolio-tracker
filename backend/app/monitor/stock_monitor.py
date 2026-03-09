@@ -888,6 +888,14 @@ async def _process_alerts(current_prices: dict[str, float]):
     # ── Advisory alerts ──
     try:
         res = _supabase.table("price_targets").select("*").eq("is_latest", True).execute()
+        # Supplement name_map with stock_name from price_targets.
+        # Advisory stocks may not be in portfolio_holdings, so their names
+        # would be missing from name_map if we only read from holdings above.
+        for pt in res.data:
+            t = pt.get("ticker", "")
+            n = pt.get("stock_name", "")
+            if t and n and t not in name_map:
+                name_map[t] = n
         advisory_alerts = check_advisory_alerts(current_prices, res.data, name_map=name_map)
     except Exception as e:
         logger.error(f"Advisory alert check error: {e}")

@@ -251,7 +251,7 @@ def update_market_data():
                 hwm = price
 
             if cost * 0.98 <= price <= cost * 1.02:
-                alerts.append({"ticker": ticker, "price": price, "sl_price": cost})
+                alerts.append({"ticker": ticker, "name": h.get('name', ''), "price": price, "sl_price": cost})
 
     if alerts:
         send_alerts_to_line(alerts)
@@ -280,9 +280,10 @@ def send_alerts_to_line(alerts):
         # Batch all alerts into a single push (max 5 messages per push)
         messages = []
         for a in alerts:
+            name_str = f"　{a['name']}" if a.get('name') else ""
             msg = (
                 f"⚠️ 【停損預警】\n"
-                f"代碼：{a['ticker']}\n"
+                f"代碼：{a['ticker']}{name_str}\n"
                 f"現價：${a['price']:.2f}\n"
                 f"停損價：${a['sl_price']:.2f}\n"
                 f"狀態：股價已進入停損價 ±2% 警戒區！"
@@ -321,9 +322,10 @@ def send_alerts_to_line(alerts):
         endpoint = f"{oc_url.rstrip('/')}/api/v1/message"
         oc_headers = {"Authorization": f"Bearer {oc_token}", "Content-Type": "application/json"}
         for a in alerts:
+            name_str = f"　{a['name']}" if a.get('name') else ""
             msg = (
                 f"⚠️ 【停損預警】\n"
-                f"代碼：{a['ticker']}\n"
+                f"代碼：{a['ticker']}{name_str}\n"
                 f"現價：${a['price']:.2f}\n"
                 f"停損價：${a['sl_price']:.2f}\n"
                 f"狀態：股價已進入停損價 ±2% 警戒區！🍡"
