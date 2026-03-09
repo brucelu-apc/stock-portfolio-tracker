@@ -1,8 +1,8 @@
 # 台美股投顧追蹤工具 — 完整實作紀錄
 
 > 專案：stock-portfolio-tracker（整合投顧通知追蹤功能）
-> 時間：2026/02/12
-> 版本：v0.4.0
+> 初始建立：2026/02/12（v0.4.0）
+> 最後更新：2026/03（v0.5.0）
 > 規劃文件：Stock_Tracker_Plan.md（v3 整合版）
 
 ---
@@ -16,12 +16,15 @@
 5. [Phase 3：LINE 通知整合](#五phase-3line-通知整合)
 6. [Phase 4：Telegram + 轉發功能](#六phase-4telegram--轉發功能)
 7. [Phase 5：完善 + 遷移](#七phase-5完善--遷移)
-8. [檔案清單與行數統計](#八檔案清單與行數統計)
-9. [API 路由總表](#九api-路由總表)
-10. [排程工作總表](#十排程工作總表)
-11. [資料庫結構](#十一資料庫結構)
-12. [架構設計決策](#十二架構設計決策)
-13. [驗證結果](#十三驗證結果)
+8. [Phase 6：即時報價架構升級（v0.5.0）](#八phase-6即時報價架構升級v050)
+9. [Phase 7：管理後台 + 系統功能強化](#九phase-7管理後台--系統功能強化)
+10. [Phase 8：UI 行動版優化](#十phase-8ui-行動版優化)
+11. [檔案清單與行數統計（現況）](#十一檔案清單與行數統計現況)
+12. [API 路由總表](#十二api-路由總表)
+13. [排程工作總表](#十三排程工作總表)
+14. [資料庫結構](#十四資料庫結構)
+15. [架構設計決策](#十五架構設計決策)
+16. [驗證結果](#十六驗證結果)
 
 ---
 
@@ -338,63 +341,236 @@
 
 ---
 
-## 八、檔案清單與行數統計
+---
+
+## 八、Phase 6：即時報價架構升級（v0.5.0）
+
+### 8.1 目標
+
+取代純輪詢（twstock 每 15 分鐘）的架構，引入 WebSocket 長連線以實現秒級更新，同時保留輪詢作為備援。
+
+### 8.2 新建檔案
+
+**`backend/app/market/quote_manager.py`** (305 行)
+- 統一即時報價協調器（QuoteManager class）
+- 持有並管理所有資料來源客戶端（Fugle / Finnhub / Shioaji）
+- 依市場交易時段自動啟動/停止各資料來源
+- 提供統一的 health-check dict 給 `/api/monitor/status`
+- 由 `stock_monitor.init_monitor()` 建立並管理生命週期
+
+**`backend/app/market/fugle_ws_client.py`** (514 行)
+- Fugle WebSocket 客戶端（台股盤中即時報價，09:00-13:30 TST）
+- 包裝 `fugle-marketdata` Python SDK
+- 自動重連（exponential backoff，1s → 60s）
+- 動態訂閱/取消訂閱個別 ticker
+- 每筆報價寫入 Supabase `market_data.realtime_price`
+- 需要環境變數：`FUGLE_API_KEY`, `FUGLE_ENABLED=true`
+
+**`backend/app/market/finnhub_ws_client.py`** (332 行)
+- Finnhub WebSocket 客戶端（美股即時報價，09:30-16:00 ET）
+- 使用 `websocket-client` 套件連接 `wss://ws.finnhub.io`
+- 市場時段外自動忽略報價（確保收盤後顯示「休市」）
+- Thread-safe asyncio 橋接（Finnhub WS 使用獨立執行緒）
+- 需要環境變數：`FINNHUB_API_KEY`, `FINNHUB_ENABLED=true`
+
+**`backend/app/market/dynamic_subscription.py`** (182 行)
+- 動態訂閱掃描器（DynamicSubscription class）
+- 每 5 分鐘掃描 Supabase `portfolio_holdings` + `price_targets`
+- 自動更新 QuoteManager 的訂閱列表（新持股自動訂閱、已出清自動退訂）
+- 分離台股 / 美股 ticker 集合
+
+**`backend/app/market/polygon_fallback.py`**
+- Polygon REST API 備援（美股，供未來擴充）
+
+**`backend/app/market/shioaji_client.py`**
+- Shioaji 券商 API 客戶端（台股券商級報價，供未來擴充）
+- 需要環境變數：`SHIOAJI_API_KEY`, `SHIOAJI_SECRET_KEY`, `SHIOAJI_ENABLED=true`
+
+### 8.3 修改檔案
+
+**`backend/app/monitor/stock_monitor.py`** (529 → 1121 行)
+- 排程工作從 4 個擴充到 6 個（見第十三節）
+- Job 1（`alert_check`）：每 30 秒純比對 market_data，不再負責抓價
+- Job 2（`realtime_tw_fallback`）：twstock 每 90 秒輪詢，WS 健康時短路
+- Job 5（`realtime_us_fallback`）：yfinance/Finnhub REST 每 5 分鐘，美股開市才執行
+
+**`backend/app/market/twstock_fetcher.py`** (136 → 359 行)
+- 擴充支援 WS 降級偵測邏輯
+
+**`backend/app/market/yfinance_fetcher.py`** (194 → 507 行)
+- 擴充支援 US 盤中輪詢 + 收盤價分離
+
+### 8.4 資料庫遷移
+
+**`migration_v2.sql`**：
+- `market_data` 新增 `realtime_price`（盤中即時）、`close_price`（收盤價）
+- `market_data.ticker` 加入 UNIQUE 約束（確保 upsert 正確）
+- 回填舊資料：`close_price = current_price`
+
+### 8.5 架構設計原則
+
+```
+WS 優先，輪詢備援：
+  Fugle WS (台股盤中) ─┐
+  twstock 每 90s ───────┤─→ market_data.realtime_price ─→ alert_check
+  Finnhub WS (美股盤中) ┤
+  yfinance 每 5min ──────┘
+
+  yfinance 每日收盤後 ──→ market_data.close_price
+
+  current_price = 盤中取 realtime_price，收盤後取 close_price
+```
+
+---
+
+## 九、Phase 7：管理後台 + 系統功能強化
+
+### 9.1 新建後端檔案
+
+**`backend/app/routers/registrations.py`** (77 行)
+- 使用者註冊申請處理路由
+- 新使用者送出個人資料後觸發 Email 通知管理員
+
+**`backend/app/email/sender.py`** (131 行)
+- SMTP Email 發送模組
+- 新使用者申請時通知管理員信箱
+- 讀取 `admin_email_config` 表取得通知信箱
+
+### 9.2 新建前端元件
+
+**`src/components/admin/UserManagement.tsx`** (172 行)
+- 管理後台 — 使用者管理頁面
+- 審核新申請（啟用 / 拒絕 / 停用）
+- 調整使用者角色與投顧功能存取權限（`can_access_advisory`）
+
+**`src/components/admin/AnnouncementEditor.tsx`** (280 行)
+- 管理後台 — 系統公告編輯器
+- 新增 / 修改 / 刪除 `announcements` 表中的公告
+- 切換公告顯示狀態（is_active）
+
+**`src/components/admin/AdminEmailConfig.tsx`** (219 行)
+- 管理後台 — Email 通知設定
+- 設定接收新使用者申請通知的管理員信箱
+
+**`src/components/common/AnnouncementModal.tsx`** (89 行)
+- 登入後自動顯示最新公告的 Modal
+- 讀取 `announcements` 表中 `is_active=true` 的最新一筆
+
+**`src/components/auth/PersonalInfoModal.tsx`** (203 行)
+- 首次登入後彈出的個人資料填寫表單
+- 寫入 `user_registration_info` 表
+
+### 9.3 資料庫遷移
+
+**`migration.sql`**：
+- 新增 `announcements` 表（公告系統）
+- `user_profiles` 新增 `can_access_advisory` 欄位（投顧功能權限）
+- 新增 `user_registration_info` 表（註冊填寫資訊）
+- 新增 `admin_email_config` 表（管理員通知信箱）
+
+---
+
+## 十、Phase 8：UI 行動版優化
+
+### 10.1 HoldingsTable.tsx 優化
+
+- **停利/損欄位恢復**：移除 `display={{ base: 'none', xl: 'table-cell' }}`，改為水平捲動
+- **Sticky 首欄**：`代碼/地區` 欄位設為 `position: sticky; left: 0`
+  - `<Th>` zIndex=2，`<Td>` zIndex=1，背景色填充防穿透
+  - `<Tr role="group">` + `<Td _groupHover={{ bg: 'gray.50' }}>` 同步 hover 背景
+
+### 10.2 AdvisoryTable.tsx 重構
+
+- **可捲動表格**：以 `<Box overflowX/Y maxH="600px">` 取代 `TableContainer`
+- **Sticky 表頭**：`<Thead position="sticky" top={0} zIndex={1}>`
+- **分頁功能**：preset `[10, 20, 50]`，自訂 5–200，預設 20
+  - `safePage = Math.min(currentPageNum, totalPages)` 讀取時 clamp（不用 useEffect）
+  - 篩選變動時 `setCurrentPageNum(1)` 重置頁碼
+
+### 10.3 通知訊息修正
+
+**`backend/app/monitor/stock_monitor.py`**：
+- `name_map` 由 `portfolio_holdings` 建立後，再用 `price_targets.stock_name` 補充
+- 確保投顧專屬股票（未在持股中）的 Telegram 警示包含股票名稱
+
+**`scripts/update_market_data.py`**：
+- 停損預警 alert dict 加入 `"name": h.get('name', '')`
+- LINE 推送訊息格式更新為 `代碼：2330　台積電`（全形空格分隔）
+
+---
+
+## 十一、檔案清單與行數統計（現況）
 
 ### 後端 Python 模組
 
 | 檔案 | 行數 | 階段 | 說明 |
 |------|------|------|------|
-| `backend/app/main.py` | 138 | P1 | FastAPI 入口 + 路由掛載 |
-| `backend/app/config.py` | — | P1 | 環境變數設定 |
-| `backend/app/parser/notification_parser.py` | 470 | P1 | 通知解析器 + /parse, /import |
-| `backend/app/market/twstock_fetcher.py` | 136 | P2 | 台股即時價格抓取 |
-| `backend/app/market/yfinance_fetcher.py` | 194 | P2 | 美股/ETF 價格抓取 |
-| `backend/app/monitor/price_checker.py` | 262 | P2 | 防守價/目標價比對引擎 |
-| `backend/app/monitor/stock_monitor.py` | 529 | P2 | APScheduler 排程器 |
-| `backend/app/messaging/line_notifier.py` | 597 | P3 | LINE 推送模組 |
-| `backend/app/messaging/line_handler.py` | 403 | P3 | LINE Webhook 處理 |
-| `backend/app/messaging/telegram_notifier.py` | 298 | P4 | Telegram 推送模組 |
+| `backend/app/main.py` | 312 | P1+ | FastAPI 入口 + 路由掛載 |
+| `backend/app/config.py` | — | P1 | 環境變數設定（含 WS 設定） |
+| `backend/app/parser/notification_parser.py` | 976 | P1 | 通知解析器 + /parse, /import |
+| `backend/app/market/twstock_fetcher.py` | 359 | P2 | 台股輪詢抓取（WS 備援） |
+| `backend/app/market/yfinance_fetcher.py` | 507 | P2 | 美股/ETF 輪詢抓取（WS 備援） |
+| `backend/app/market/quote_manager.py` | 305 | P6 | 統一即時報價協調器 |
+| `backend/app/market/fugle_ws_client.py` | 514 | P6 | Fugle WebSocket（台股即時） |
+| `backend/app/market/finnhub_ws_client.py` | 332 | P6 | Finnhub WebSocket（美股即時） |
+| `backend/app/market/dynamic_subscription.py` | 182 | P6 | 動態訂閱掃描器 |
+| `backend/app/monitor/price_checker.py` | 280 | P2 | 防守價/目標價比對引擎 |
+| `backend/app/monitor/stock_monitor.py` | 1,121 | P2+ | APScheduler 排程器（6 個工作） |
+| `backend/app/messaging/line_notifier.py` | 623 | P3 | LINE 推送模組 |
+| `backend/app/messaging/line_handler.py` | 525 | P3 | LINE Webhook 處理 |
+| `backend/app/messaging/telegram_notifier.py` | 322 | P4 | Telegram 推送模組 |
 | `backend/app/messaging/telegram_handler.py` | 406 | P4 | Telegram Webhook 處理 |
-| `backend/app/messaging/stock_forwarder.py` | 333 | P4 | 轉發路由 + 邏輯 |
-| `backend/app/report/monthly_report.py` | 502 | P5 | 月報生成（Flex + HTML） |
-| **後端小計** | **4,268** | | |
+| `backend/app/messaging/stock_forwarder.py` | 376 | P4 | 轉發路由 + 邏輯 |
+| `backend/app/report/monthly_report.py` | 516 | P5 | 月報生成（Flex + HTML） |
+| `backend/app/routers/registrations.py` | 77 | P7 | 使用者註冊申請路由 |
+| `backend/app/email/sender.py` | 131 | P7 | SMTP Email 發送模組 |
+| **後端小計** | **7,864** | | |
 
 ### 前端 TypeScript/React 元件
 
 | 檔案 | 行數 | 階段 | 說明 |
 |------|------|------|------|
-| `src/components/advisory/NotificationInput.tsx` | 186 | P1 | 通知文字輸入 |
-| `src/components/advisory/ParsePreview.tsx` | 298 | P1 | 解析結果預覽 + 匯入 |
-| `src/components/advisory/AdvisoryTable.tsx` | 490 | P2 | 即時追蹤表格 |
-| `src/components/advisory/AlertPanel.tsx` | 307 | P2 | 即時警示面板 |
-| `src/components/advisory/StockForwardModal.tsx` | 441 | P4 | 轉發目標選擇 Modal |
-| `src/components/advisory/AdvisoryHistory.tsx` | 516 | P5 | 歷史查詢三分頁面板 |
-| `src/components/settings/MessagingSettings.tsx` | 355 | P4 | 通知偏好設定 |
-| `src/services/backend.ts` | 213 | P1 | API 客戶端 |
-| **前端小計** | **2,806** | | |
+| `src/components/advisory/NotificationInput.tsx` | 243 | P1 | 通知文字輸入 |
+| `src/components/advisory/ParsePreview.tsx` | 607 | P1 | 解析結果預覽 + 匯入 |
+| `src/components/advisory/AdvisoryTable.tsx` | 890 | P2+P8 | 即時追蹤表格（含分頁、sticky 欄）|
+| `src/components/advisory/AlertPanel.tsx` | 352 | P2 | 即時警示面板 |
+| `src/components/advisory/StockForwardModal.tsx` | 749 | P4 | 轉發目標選擇 Modal |
+| `src/components/advisory/AdvisoryHistory.tsx` | 813 | P5 | 歷史查詢三分頁面板 |
+| `src/components/settings/MessagingSettings.tsx` | 362 | P4 | 通知偏好設定 |
+| `src/components/holdings/HoldingsTable.tsx` | 612 | P8 | 持股清單（sticky 首欄、分頁）|
+| `src/components/admin/UserManagement.tsx` | 172 | P7 | 管理後台 — 使用者管理 |
+| `src/components/admin/AnnouncementEditor.tsx` | 280 | P7 | 管理後台 — 公告編輯器 |
+| `src/components/admin/AdminEmailConfig.tsx` | 219 | P7 | 管理後台 — Email 設定 |
+| `src/components/common/AnnouncementModal.tsx` | 89 | P7 | 登入後公告 Modal |
+| `src/components/auth/PersonalInfoModal.tsx` | 203 | P7 | 首次登入個人資料表單 |
+| `src/services/backend.ts` | 431 | P1+ | API 客戶端 |
+| `src/hooks/useRealtimeSubscription.ts` | 136 | P2 | Supabase Realtime 訂閱 Hook |
+| **前端小計** | **6,218** | | |
 
 ### 基礎設施
 
 | 檔案 | 行數 | 說明 |
 |------|------|------|
-| `supabase/migrations/002_advisory_tables.sql` | 237 | 7 張新表 + RLS + 索引 |
+| `supabase/migrations/001_initial_schema.sql` | — | 初始表結構 |
+| `supabase/migrations/002_advisory_tables.sql` | 237 | 7 張投顧追蹤表 + RLS + 索引 |
+| `supabase/migrations/003–005_*.sql` | — | 補丁遷移 |
+| `migration.sql` | — | 公告、投顧權限、註冊強化 |
+| `migration_v2.sql` | — | market_data 即時/收盤分離 |
 | `.github/workflows/market-update.yml` | 75 | 備援排程 + health check |
 | `backend/Dockerfile` | 16 | Python 3.11 Docker 映像 |
-| `backend/requirements.txt` | 27 | Python 依賴 |
-| **基礎設施小計** | **355** | |
+| `backend/requirements.txt` | — | Python 依賴 |
 
 ### 總計
 
 | 分類 | 行數 |
 |------|------|
-| 後端 Python | 4,268 |
-| 前端 TypeScript | 2,806 |
-| 基礎設施 | 355 |
-| **總計** | **7,429** |
+| 後端 Python | 7,864 |
+| 前端 TypeScript | 6,218 |
+| **總計** | **14,082+** |
 
 ---
 
-## 九、API 路由總表
+## 十二、API 路由總表
 
 ### Router 掛載路由
 
@@ -409,58 +585,45 @@
 | POST | `/api/forward/targets` | Forward | 新增轉發目標 |
 | DELETE | `/api/forward/targets/{id}` | Forward | 刪除轉發目標 |
 | GET | `/api/forward/logs` | Forward | 查詢轉發紀錄 |
+| POST | `/api/registrations` | Registrations | 提交使用者申請資料 |
 
 ### main.py 直接路由
 
 | 方法 | 路徑 | 說明 |
 |------|------|------|
-| GET | `/api/monitor/status` | 監控系統狀態 |
-| POST | `/api/prices/refresh` | 手動觸發價格刷新 |
-| POST | `/api/report/generate` | 月報預覽/發送 (send=true/false) |
+| GET | `/api/monitor/status` | 監控系統狀態（含 WS 健康資訊） |
+| POST | `/api/prices/refresh` | 手動觸發全量價格刷新 |
+| POST | `/api/prices/realtime-refresh` | 手動觸發即時報價刷新（台+美） |
+| POST | `/api/prices/close-refresh` | 手動觸發收盤價刷新 |
+| POST | `/api/report/generate` | 月報預覽/發送（send=true/false） |
 | GET | `/health` | 健康檢查 |
 
 ---
 
-## 十、排程工作總表
+## 十三、排程工作總表
 
-| # | 工作 ID | 觸發條件 | 時區 | 說明 |
-|---|---------|----------|------|------|
-| 1 | `tw_intraday_check` | 每 15 分鐘 (09:00-13:30) | TST (UTC+8) | 台股盤中即時監控 |
-| 2 | `tw_close_check` | 平日 14:00 | TST | 台股收盤後最終比價 |
-| 3 | `us_close_check` | 平日 07:00 | TST | 美股收盤後更新 |
-| 4 | `monthly_report` | 每月 1 日 14:30 | TST | 月報生成 + 推送 |
+| # | 工作 ID | 觸發條件 | 說明 |
+|---|---------|----------|------|
+| 1 | `alert_check` | 每 30 秒 | 從 market_data 讀值比對警示（不負責抓價） |
+| 2 | `realtime_tw_fallback` | 每 90 秒 | twstock 台股輪詢；Fugle WS 健康時短路 |
+| 3 | `daily_tw_close` | 每日 14:05 TST | 台股收盤後 yfinance 更新收盤價 |
+| 4 | `daily_us_close` | 每日 06:30 TST | 美股收盤後 yfinance + 匯率更新 |
+| 5 | `realtime_us_fallback` | 每 5 分鐘 | yfinance/Finnhub REST 美股輪詢；非美股時段短路 |
+| 6 | `monthly_report` | 每月 1 日 14:30 TST | 月報生成並推送（Telegram 優先，LINE 輔助） |
 
-GitHub Actions 備援排程（比 Railway 晚 1 小時）：
-- `0 7 * * 1-5` → 台股收盤備援 (UTC)
-- `0 22 * * 1-5` → 美股收盤備援 (UTC)
-
----
-
-## 十一、資料庫結構
-
-### 新增表（002_advisory_tables.sql）
-
-```
-price_targets          — 投顧目標價（is_latest 標記最新版本）
-advisory_tracking      — 使用者追蹤狀態（watching/entered/exited/ignored）
-price_alerts           — 觸發的價格警示（defense_breach/target_reached 等）
-forward_targets        — 轉發目標（LINE group/Telegram chat）
-forward_logs           — 轉發歷史記錄
-user_messaging         — 使用者通知偏好（LINE/Telegram ID + 開關）
-advisory_notifications — 原始通知文字備份（含 message_type、source 欄位）
-```
-
-### 關鍵索引
-
-```sql
-idx_price_targets_latest   ON price_targets(ticker, is_latest)
-idx_price_alerts_triggered ON price_alerts(triggered_at DESC)
-idx_advisory_tracking_user ON advisory_tracking(user_id, ticker)
-```
+GitHub Actions 備援排程（Railway 正常時 health check 後自動跳過）：
+- `0 7 * * 1-5` UTC（TST 15:00）→ 台股收盤備援
+- `0 22 * * 1-5` UTC（TST 06:00）→ 美股收盤備援
 
 ---
 
-## 十二、架構設計決策
+## 十四、資料庫結構
+
+詳見 [DATABASE_SCHEMA.md](./DATABASE_SCHEMA.md)。
+
+---
+
+## 十五、架構設計決策
 
 ### 12.1 月報從 Playwright → 原生富文字
 
@@ -512,7 +675,7 @@ idx_advisory_tracking_user ON advisory_tracking(user_id, ticker)
 
 ---
 
-## 十三、驗證結果
+## 十六、驗證結果
 
 ### 後端模組語法驗證
 
